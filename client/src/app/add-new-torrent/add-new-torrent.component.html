@@ -1,0 +1,236 @@
+<div class="field">
+  <div>
+    <div class="field">
+      <label class="label">Torrent file</label>
+      <div class="file has-name">
+        <label class="file-label">
+          <input class="file-input" type="file" name="resume" (change)="pickFile($event)" [disabled]="saving" />
+          <span class="file-cta">
+            <span class="file-icon">
+              <i class="fas fa-upload"></i>
+            </span>
+            <span class="file-label"> Pick a torrent file... </span>
+          </span>
+          <span class="file-name">
+            {{ fileName }}
+          </span>
+        </label>
+      </div>
+    </div>
+
+    <div class="field">
+      <label class="label">Magnet Link</label>
+      <div class="control">
+        <textarea
+          class="textarea"
+          placeholder="Paste your magnet link here"
+          [(ngModel)]="magnetLink"
+          [disabled]="saving"
+          (blur)="checkFiles()"
+          (paste)="onPaste()"
+        ></textarea>
+      </div>
+    </div>
+
+    <div class="field">
+      <div class="control">
+        <button class="button is-success" [disabled]="saving" [ngClass]="{ 'is-loading': saving }" (click)="ok()">
+          <span>Add Torrent</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="separator">Advanced settings</div>
+
+    <div class="field">
+      <label class="label">Downloader</label>
+      <div class="control select is-fullwidth">
+        <select [(ngModel)]="downloadClient" (ngModelChange)="setFinishAction()">
+          <option [ngValue]="0">Internal Downloader</option>
+          <option [ngValue]="1">Bezzad</option>
+          <option [ngValue]="2">Aria2c</option>
+          <option [ngValue]="3">Symlink Downloader</option>
+          <option [ngValue]="4">Synology DownloadStation</option>
+        </select>
+      </div>
+      <p class="help">
+        Select which downloader is used to download this torrent from the debrid provider to your host.
+      </p>
+    </div>
+
+    <div class="field">
+      <label class="label">Post Download Action</label>
+      <div class="control select is-fullwidth">
+        <select [(ngModel)]="hostDownloadAction">
+          <option [ngValue]="0">Download all files to host</option>
+          <option [ngValue]="1">Don't download any files to host</option>
+        </select>
+      </div>
+      <p class="help">
+        When a torrent is finished downloading on the provider, perform this action. Use this setting if you only want
+        to add files to your debrid provider but not download them to the host.
+      </p>
+    </div>
+
+    <div class="field">
+      <label class="label">Minimum file size to download</label>
+      <div class="control">
+        <div class="field has-addons" style="margin-bottom: 0">
+          <div class="control is-expanded">
+            <input class="input" type="number" max="1000" min="0" step="1" [(ngModel)]="downloadMinSize" />
+          </div>
+          <div class="control">
+            <a class="button is-static">MB</a>
+          </div>
+        </div>
+      </div>
+      @if (provider === "AllDebrid") {
+        <p class="help">
+          When downloading with AllDebrid it cannot be guaranteed that only files above this limit will be download as
+          some files are grouped together in 1 large archive.
+        </p>
+      }
+      @if (downloadAction === 2) {
+        <p class="help">This setting does not apply to manually selected files.</p>
+      }
+    </div>
+
+    <div class="field">
+      <label class="label">Include files</label>
+      <div class="control">
+        <div class="field" style="margin-bottom: 0">
+          <div class="control is-expanded">
+            <input class="input" type="text" [(ngModel)]="includeRegex" (blur)="verifyRegex()" />
+          </div>
+        </div>
+      </div>
+      <p class="help">
+        Select only the files that are matching this regular expression. Only use this setting OR the Exclude files
+        setting, not both.
+      </p>
+      @if (downloadAction === 2) {
+        <p class="help">This setting does not apply to manually selected files.</p>
+      }
+      @if (includeRegexError) {
+        <p class="help is-danger">{{ includeRegexError }}</p>
+      }
+    </div>
+
+    <div class="field">
+      <label class="label">Exclude files</label>
+      <div class="control">
+        <div class="field" style="margin-bottom: 0">
+          <div class="control is-expanded">
+            <input class="input" type="text" [(ngModel)]="excludeRegex" (blur)="verifyRegex()" />
+          </div>
+        </div>
+      </div>
+      <p class="help">
+        Ignore files that are matching this regular expression. Only use this setting OR the Include files setting, not
+        both.
+      </p>
+      @if (downloadAction === 2) {
+        <p class="help">This setting does not apply to manually selected files.</p>
+      }
+      @if (excludeRegexError) {
+        <p class="help is-danger">{{ excludeRegexError }}</p>
+      }
+    </div>
+
+    <div class="field">
+      <label class="label">Finished action</label>
+      <div class="control select is-fullwidth">
+        <select [(ngModel)]="finishedAction">
+          <option [ngValue]="0">Do nothing</option>
+          @if (downloadClient !== 2) {
+            <option [ngValue]="1">Remove torrent from provider and client</option>
+            <option [ngValue]="2">Remove torrent from provider</option>
+          }
+          <option [ngValue]="3">Remove torrent from client</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="field">
+      <label class="label">Finished Action Delay (minutes)</label>
+      <div class="control is-fullwidth">
+        <input class="input" type="number" [(ngModel)]="finishedActionDelay" />
+      </div>
+      <p class="help">
+        When a torrent is finished downloading on the provider, perform this action. Use this setting if you only want
+        to add files to your debrid provider but not download them to the host.
+      </p>
+    </div>
+
+    <div class="field">
+      <label class="label">Category</label>
+      <div class="control">
+        <input class="input" type="text" [(ngModel)]="category" />
+      </div>
+      <p class="help">The category becomes a sub-folder in your main download path.</p>
+    </div>
+
+    <div class="field">
+      <label class="label">Priority</label>
+      <div class="control">
+        <input class="input" type="number" step="1" [(ngModel)]="priority" />
+      </div>
+      <p class="help">
+        Set the priority for this torrent where 1 is the highest. When empty it will be assigned the lowest priority.
+      </p>
+    </div>
+    <div class="field">
+      <label class="label">Automatic retry downloads</label>
+      <div class="control">
+        <input class="input" type="number" max="1000" min="0" step="1" [(ngModel)]="downloadRetryAttempts" />
+      </div>
+      <p class="help">When a single download fails it will retry it this many times before marking it as failed.</p>
+    </div>
+    <div class="field">
+      <label class="label">Automatic retry torrent</label>
+      <div class="control">
+        <input class="input" type="number" max="1000" min="0" step="1" [(ngModel)]="torrentRetryAttempts" />
+      </div>
+      <p class="help">
+        When a single download has failed multiple times (see setting above) or when the torrent itself received an
+        error it will retry the full torrent this many times before marking it failed.
+      </p>
+    </div>
+    <div class="field">
+      <label class="label">Delete download when in error</label>
+      <div class="control">
+        <input class="input" type="number" max="100000" min="0" step="1" [(ngModel)]="torrentDeleteOnError" />
+      </div>
+      <p class="help">
+        When a download has been in error for this many minutes, delete it from the provider and the client. 0 to
+        disable.
+      </p>
+    </div>
+    <div class="field">
+      <label class="label">Torrent maximum lifetime</label>
+      <div class="control">
+        <input class="input" type="number" max="100000" min="0" step="1" [(ngModel)]="torrentLifetime" />
+      </div>
+      <p class="help">
+        The maximum lifetime of a torrent in minutes. When this time has passed, mark the torrent as error. If the
+        torrent is completed and has downloads, the lifetime setting will not apply. 0 to disable.
+      </p>
+    </div>
+  </div>
+</div>
+
+<div class="field">
+  <div class="control">
+    @if (error) {
+      <div class="notification is-danger is-light">{{ error }}</div>
+    }
+  </div>
+</div>
+
+<div class="field">
+  <div class="control">
+    <button class="button is-success" [disabled]="saving" [ngClass]="{ 'is-loading': saving }" (click)="ok()">
+      <span>Add Torrent</span>
+    </button>
+  </div>
+</div>

@@ -1,0 +1,85 @@
+<nav class="navbar is-dark is-fixed-top" role="navigation" aria-label="main navigation">
+  <div class="navbar-brand">
+    <a class="navbar-item" routerLink="/">
+      <img src="assets/logo.png" />
+    </a>
+
+    <a
+      role="button"
+      class="navbar-burger burger"
+      aria-label="menu"
+      aria-expanded="false"
+      [class.is-active]="showMobileMenu"
+      (click)="showMobileMenu = !showMobileMenu"
+    >
+      <span aria-hidden="true"></span>
+      <span aria-hidden="true"></span>
+      <span aria-hidden="true"></span>
+    </a>
+  </div>
+
+  <div class="navbar-menu" [class.is-active]="showMobileMenu">
+    <div class="navbar-start">
+      <a class="navbar-item" routerLink="/">
+        <span class="icon">
+          <i class="fas fa-table" aria-hidden="true"></i>
+        </span>
+        <span>Torrents</span>
+      </a>
+      <a class="navbar-item" routerLink="/add">
+        <span class="icon">
+          <i class="fas fa-plus" aria-hidden="true"></i>
+        </span>
+        <span>Add New Torrent</span>
+      </a>
+      <a class="navbar-item" routerLink="/settings">
+        <span class="icon">
+          <i class="fas fa-cog" aria-hidden="true"></i>
+        </span>
+        <span>Settings</span>
+      </a>
+      @if (profile) {
+        <a class="navbar-item" href="{{ providerLink }}" target="_blank" rel="noopener">
+          <span class="icon">
+            <i class="fas fa-euro-sign" aria-hidden="true"></i>
+          </span>
+          @if (profile.expiration) {
+            <span>Premium Status: {{ profile.expiration | date }}</span>
+          } @else {
+            <span class="no-premium">Not premium</span>
+          }
+        </a>
+      }
+    </div>
+
+    <div class="navbar-end">
+      <div class="navbar-item has-dropdown is-hoverable">
+        <span class="navbar-link"> Account </span>
+
+        <div class="navbar-dropdown is-right">
+          <a class="navbar-item" routerLink="profile"> Profile </a>
+          <a class="navbar-item" (click)="logout()"> Logout </a>
+          <hr class="navbar-divider" />
+          <a href="https://github.com/rogerfar/rdt-client" target="_blank" class="navbar-item">Version {{ version }}</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</nav>
+
+@if (
+  profile &&
+  (!profile.disableUpdateNotification || profile.isInsecure) &&
+  profile.latestVersion &&
+  profile.currentVersion !== profile.latestVersion
+) {
+  <div class="notification" [ngClass]="profile.isInsecure ? 'is-danger' : 'is-warning'">
+    @if (profile.isInsecure) {
+      <span> Your current version is insecure. </span>
+    }
+    <span>
+      Version {{ profile.latestVersion }} of RealDebrid Client was found. You are currently on version
+      {{ profile.currentVersion }}.
+    </span>
+  </div>
+}

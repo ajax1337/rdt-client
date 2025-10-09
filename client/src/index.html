@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Real-Debrid Torrent Client</title>
+    <base href="/" />
+    <script>
+      (function () {
+        const baseElement = document.querySelector("base");
+
+        if (baseElement) {
+          window["_app_base"] = baseElement.getAttribute("href");
+          console.log("setting base href to " + window["_app_base"]);
+        }
+      })();
+    </script>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" type="image/x-icon" href="favicon.ico" />
+  </head>
+  <body>
+    <app-root></app-root>
+  </body>
+</html>
