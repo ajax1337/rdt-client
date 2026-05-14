@@ -103,6 +103,40 @@ export class AddNewTorrentComponent implements OnInit {
           .map((c) => c.trim())
           .filter((c) => c.length > 0)
           .filter((c, i, arr) => arr.findIndex((a) => a.toLowerCase() === c.toLowerCase()) === i);
+
+        // Patched: if no categories are explicitly configured in
+        // General:Categories, fall back to the distinct categories already
+        // used by existing torrents so the dropdown is never empty.
+        if (this.categories.length === 0) {
+          this.torrentService
+            .getList()
+            .pipe(takeUntilDestroyed(this.destroyRef))
+            .subscribe({
+              next: (torrents) => {
+                const seen = new Set<string>();
+                const fromUsed: string[] = [];
+                for (const t of torrents ?? []) {
+                  const c = (t.category ?? '').trim();
+                  if (c.length === 0) continue;
+                  const k = c.toLowerCase();
+                  if (seen.has(k)) continue;
+                  seen.add(k);
+                  fromUsed.push(c);
+                }
+                this.categories = fromUsed;
+                const m = this.categories.find((c) => c.toLowerCase() === (this.category ?? '').toLowerCase());
+                if (m) {
+                  this.category = m;
+                } else {
+                  this.updateFilteredCategories();
+                }
+              },
+              error: () => {
+                // best-effort fallback; ignore failures
+              },
+            });
+        }
+
         const matchedCategory = this.categories.find((c) => c.toLowerCase() === (this.category ?? '').toLowerCase());
         if (matchedCategory) {
           this.category = matchedCategory;

@@ -42,6 +42,7 @@
           <th (click)="sort('files.length')">Files</th>
           <th (click)="sort('downloads.length')">Downloads</th>
           <th (click)="sort('rdSize')">Size</th>
+          <th>ETA</th>
           <th (click)="sort('added')">Requested</th>
           <th (click)="sort('status')">Status</th>
         </tr>
@@ -72,6 +73,9 @@
             </td>
             <td>
               {{ torrent.rdSize | filesize }}
+            </td>
+            <td>
+              {{ torrent | eta }}
             </td>
             <td>
               {{ torrent.added | date: "medium" }}
@@ -113,6 +117,7 @@
               <span class="mobile-card-detail"
                 ><span class="detail-label">Downloads</span> {{ (torrent.downloadsCount ?? torrent.downloads?.length ?? 0) | number }}</span
               >
+              <span class="mobile-card-detail"><span class="detail-label">ETA</span> {{ torrent | eta }}</span>
             </div>
           </div>
         </div>

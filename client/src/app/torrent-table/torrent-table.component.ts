@@ -11,12 +11,13 @@ import { NgClass, DecimalPipe, DatePipe } from '@angular/common';
 import { getTorrentStatus, TorrentStatusPipe } from '../torrent-status.pipe';
 import { SortDirection, getSortFieldValue, sortItems } from '../sort.pipe';
 import { FileSizePipe } from '../filesize.pipe';
+import { EtaPipe } from '../eta.pipe';
 
 @Component({
   selector: 'app-torrent-table',
   templateUrl: './torrent-table.component.html',
   styleUrls: ['./torrent-table.component.scss'],
-  imports: [FormsModule, NgClass, DecimalPipe, DatePipe, TorrentStatusPipe, FileSizePipe],
+  imports: [FormsModule, NgClass, DecimalPipe, DatePipe, TorrentStatusPipe, FileSizePipe, EtaPipe],
   standalone: true,
 })
 export class TorrentTableComponent implements OnInit, OnDestroy {
