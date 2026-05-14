@@ -311,13 +311,35 @@ public class TorBoxDebridClient(ILogger<TorBoxDebridClient> logger, IHttpClientF
             }
 
             var usenets = await HandleErrors(() => GetClient().Usenet.GetCurrentAsync(true));
-            var usenet = usenets?.FirstOrDefault(m => m.Hash == torrent.RdId);
+            var usenet = usenets?.FirstOrDefault(m => String.Equals(m.Hash, torrent.RdId, StringComparison.OrdinalIgnoreCase));
             id = (Int32?)usenet?.Id;
         }
         else
         {
-            var torrentId = await HandleErrors(() => GetClient().Torrents.GetHashInfoAsync(torrent.Hash, true));
-            id = torrentId?.Id;
+            // Patched: bypass TorBox.NET's case-sensitive GetHashInfoAsync. Look up by hash directly
+            // against /mylist AND /queued with case-insensitive comparison, since Torbox returns
+            // hashes in lowercase but rdt-client may store them in any case.
+            var currentTorrents = await HandleErrors(() => GetClient().Torrents.GetCurrentAsync(true));
+            var match = currentTorrents?.FirstOrDefault(t => String.Equals(t.Hash, torrent.Hash, StringComparison.OrdinalIgnoreCase));
+            id = match?.Id;
+
+            if (id == null)
+            {
+                var queuedTorrents = await HandleErrors(() => GetClient().Torrents.GetQueuedAsync(true));
+                var qmatch = queuedTorrents?.FirstOrDefault(t => String.Equals(t.Hash, torrent.Hash, StringComparison.OrdinalIgnoreCase));
+                id = qmatch?.Id;
+
+                if (id == null)
+                {
+                    logger.LogWarning(
+                        "GetDownloadInfos: TorBox hash {Hash} (RdId={RdId}) not found in current ({CurrentCount}) or queued ({QueuedCount}) lists. "
+                        + "First 3 current hashes: {Sample}",
+                        torrent.Hash, torrent.RdId,
+                        currentTorrents?.Count ?? -1,
+                        queuedTorrents?.Count ?? -1,
+                        currentTorrents == null ? "<null>" : String.Join(",", currentTorrents.Take(3).Select(t => t.Hash ?? "<null>")));
+                }
+            }
         }
 
         if (id == null)
