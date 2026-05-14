@@ -648,12 +648,32 @@ public class Torrents(
 
     public async Task UpdateRdData()
     {
-        await RealDebridUpdateLock.WaitAsync();
-
-        var torrents = await Get();
+        // Patched: bound the wait on RealDebridUpdateLock.
+        //
+        // The same lock is also held by AddMagnetToDebridQueue / AddTorrentToDebridQueue
+        // while their provider HTTP call is in flight. If that call hangs — slow
+        // TorBox/RealDebrid response, Polly retry-storm at the resilience layer,
+        // a connection sitting in TCP CLOSE_WAIT — the original code waited on
+        // the lock forever, so every poll cycle blocked too. The torrent UI then
+        // appeared "stuck in Processing" even though the provider had finished
+        // caching minutes earlier.
+        //
+        // 5 s is long enough that we don't false-skip behind a normal-latency Add
+        // (sub-second on a healthy network), and short enough that a single stuck
+        // Add only delays one poll tick. The next ProviderUpdater iteration
+        // (CheckInterval seconds later) re-tries automatically.
+        //
+        // Also moves `await Get()` inside the try/finally so a DB exception
+        // doesn't leak the lock (latent issue in the original).
+        if (!await RealDebridUpdateLock.WaitAsync(TimeSpan.FromSeconds(5)))
+        {
+            logger.LogWarning("UpdateRdData skipped — RealDebridUpdateLock held by another operation (likely a slow Add* provider call). Will retry next tick.");
+            return;
+        }
 
         try
         {
+            var torrents = await Get();
             var rdTorrents = await DebridClient.GetDownloads();
             var torrentsByRdId = CreateTorrentLookupByRdId(torrents);
             var providerTorrentsById = CreateProviderTorrentLookupById(rdTorrents);
