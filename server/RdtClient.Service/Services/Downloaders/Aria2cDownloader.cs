@@ -39,9 +39,12 @@ public class Aria2cDownloader : IDownloader
             _remotePath = _filePath;
         }
 
+        // Patched: original 10s timeout was too aggressive when aria2c is saturated
+        // with active downloads (a status poll could exceed it and crash TaskRunner).
+        // 60s matches the rest of the patched provider HttpClient timeouts.
         var httpClient = new HttpClient
         {
-            Timeout = TimeSpan.FromSeconds(10)
+            Timeout = TimeSpan.FromSeconds(60)
         };
 
         _aria2NetClient = new(Settings.Get.DownloadClient.Aria2cUrl, Settings.Get.DownloadClient.Aria2cSecret, httpClient, 10);
