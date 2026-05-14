@@ -2,12 +2,19 @@ import { Pipe, PipeTransform } from '@angular/core';
 import { Torrent } from './models/torrent.model';
 
 /**
- * Formats the estimated time remaining for a torrent's local download.
+ * Formats the estimated time remaining for a torrent's local (host) download.
  *
- * Uses rdSize, rdProgress (0-100), and rdSpeed (bytes/sec).
+ * Sums speed and remaining bytes across the torrent's in-flight Download rows
+ * (the same source used by the Status pipe), so the ETA reflects what aria2c
+ * is actually doing — not the provider-side rdSpeed (which is 0 for cached
+ * torrents). Falls back to rdSize/rdProgress/rdSpeed only if no download is
+ * actively in progress (e.g. while still cached on provider but not yet
+ * fetched locally).
+ *
  * Returns:
- *   - "—" if the torrent isn't downloading (no speed, completed, missing data)
- *   - "5s" / "2m 15s" / "1h 23m" otherwise
+ *   - "—" when no meaningful ETA can be computed (no active download, no
+ *     speed, already complete)
+ *   - "5s" / "2m 15s" / "1h 23m" / "1d 5h" otherwise
  */
 @Pipe({ name: 'eta', standalone: true })
 export class EtaPipe implements PipeTransform {
@@ -16,21 +23,41 @@ export class EtaPipe implements PipeTransform {
       return '—';
     }
 
+    // Prefer per-Download stats — this is what aria2c actually reports.
+    const downloads = torrent.downloads ?? [];
+    let speedSum = 0;
+    let remainingSum = 0;
+
+    for (const dl of downloads) {
+      if (dl.downloadStarted && !dl.downloadFinished && (dl.bytesDone ?? 0) > 0) {
+        const speed = Number(dl.speed ?? 0);
+        const done = Number(dl.bytesDone ?? 0);
+        const total = Number(dl.bytesTotal ?? 0);
+        if (speed > 0 && total > done) {
+          speedSum += speed;
+          remainingSum += total - done;
+        }
+      }
+    }
+
+    if (speedSum > 0 && remainingSum > 0) {
+      return EtaPipe.formatSeconds(Math.max(0, Math.round(remainingSum / speedSum)));
+    }
+
+    // Fallback: provider-side speed (rare path — typically rdSpeed is 0 for
+    // cached debrid torrents).
     const size = Number(torrent.rdSize ?? 0);
     const progress = Number(torrent.rdProgress ?? 0);
     const speed = Number(torrent.rdSpeed ?? 0);
 
-    if (size <= 0 || speed <= 0 || progress >= 100) {
-      return '—';
+    if (size > 0 && speed > 0 && progress < 100) {
+      const remaining = size * (1 - progress / 100);
+      if (remaining > 0) {
+        return EtaPipe.formatSeconds(Math.max(0, Math.round(remaining / speed)));
+      }
     }
 
-    const remainingBytes = size * (1 - progress / 100);
-    if (remainingBytes <= 0) {
-      return '—';
-    }
-
-    const seconds = Math.max(0, Math.round(remainingBytes / speed));
-    return EtaPipe.formatSeconds(seconds);
+    return '—';
   }
 
   private static formatSeconds(s: number): string {
