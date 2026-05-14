@@ -383,10 +383,11 @@ public class TorBoxDebridClientTest
         torBoxClientMock.Setup(m => m.Torrents).Returns(torrentsApiMock.Object);
         clientMock.Protected().Setup<ITorBoxNetClient>("GetClient", ItExpr.IsAny<String>()).Returns(torBoxClientMock.Object);
 
-        torrentsApiMock.Setup(m => m.GetHashInfoAsync("test-hash", true, It.IsAny<CancellationToken>()))
-                       .ReturnsAsync(new TorrentInfoResult
+        // Patch: GetDownloadInfos now uses GetCurrentAsync (case-insensitive) instead of GetHashInfoAsync.
+        torrentsApiMock.Setup(m => m.GetCurrentAsync(true, It.IsAny<CancellationToken>()))
+                       .ReturnsAsync(new List<TorrentInfoResult>
                        {
-                           Id = 12345
+                           new() { Id = 12345, Hash = "test-hash" }
                        });
 
         _fileFilterMock.Setup(m => m.IsDownloadable(torrent, It.IsAny<String>(), It.IsAny<Int64>())).Returns(true);
@@ -434,10 +435,11 @@ public class TorBoxDebridClientTest
         torBoxClientMock.Setup(m => m.Torrents).Returns(torrentsApiMock.Object);
         clientMock.Protected().Setup<ITorBoxNetClient>("GetClient", ItExpr.IsAny<String>()).Returns(torBoxClientMock.Object);
 
-        torrentsApiMock.Setup(m => m.GetHashInfoAsync("test-hash", true, It.IsAny<CancellationToken>()))
-                       .ReturnsAsync(new TorrentInfoResult
+        // Patch: GetDownloadInfos now uses GetCurrentAsync (case-insensitive) instead of GetHashInfoAsync.
+        torrentsApiMock.Setup(m => m.GetCurrentAsync(true, It.IsAny<CancellationToken>()))
+                       .ReturnsAsync(new List<TorrentInfoResult>
                        {
-                           Id = 12345
+                           new() { Id = 12345, Hash = "test-hash" }
                        });
 
         _fileFilterMock.Setup(m => m.IsDownloadable(torrent, It.IsAny<String>(), It.IsAny<Int64>())).Returns(true);
