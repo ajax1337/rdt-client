@@ -34,21 +34,17 @@ public class ProviderUpdater(ILogger<ProviderUpdater> logger, IServiceProvider s
                 {
                     logger.LogDebug($"Updating torrent info from debrid provider");
 
-                    var updateTime = Settings.Get.Provider.CheckInterval * 3;
+                    // Patched: original logic backed off to 30s when no dashboard
+                    // was connected (CheckInterval * 3, hard-floored at 30). For a
+                    // single-user self-hosted setup that made "torrent added → first
+                    // bytes" feel sluggish since cached Torbox torrents could sit up
+                    // to 30s before rdt-client noticed. Collapsed both paths to a
+                    // single CheckInterval-driven cadence with a 5s floor.
+                    var updateTime = Settings.Get.Provider.CheckInterval;
 
-                    if (updateTime < 30)
+                    if (updateTime < 5)
                     {
-                        updateTime = 30;
-                    }
-
-                    if (RdtHub.HasConnections)
-                    {
-                        updateTime = Settings.Get.Provider.CheckInterval;
-
-                        if (updateTime < 5)
-                        {
-                            updateTime = 5;
-                        }
+                        updateTime = 5;
                     }
 
                     _nextUpdate = DateTime.UtcNow.AddSeconds(updateTime);
