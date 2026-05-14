@@ -219,8 +219,8 @@ or
     public Boolean AutoDelete { get; set; } = false;
 
     [DisplayName("Connection Timeout")]
-    [Description("Timeout in seconds to make a connection to the provider. Increase if you experience timeouts in the logs.")]
-    public Int32 Timeout { get; set; } = 10;
+    [Description("Timeout in seconds to make a connection to the provider. Increase if you experience timeouts in the logs. Can be overridden via the PROVIDER_TIMEOUT_SECONDS environment variable at startup.")]
+    public Int32 Timeout { get; set; } = Int32.TryParse(Environment.GetEnvironmentVariable("PROVIDER_TIMEOUT_SECONDS"), out var envTimeout) && envTimeout > 0 ? envTimeout : 60;
 
     [DisplayName("Check Interval")]
     [Description("The interval to check the torrents info on the providers API. Minumum is 3 seconds. When there are no active downloads this limit is increased * 3.")]
