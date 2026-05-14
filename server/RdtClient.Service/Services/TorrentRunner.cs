@@ -151,7 +151,9 @@ public class TorrentRunner(
             Log("Updating Aria2 status");
 
             var httpClient = httpClientFactory.CreateClient();
-            httpClient.Timeout = TimeSpan.FromSeconds(10);
+            // Patched: bumped from 10s to 60s so a saturated aria2c RPC doesn't
+            // crash TaskRunner on every tick.
+            httpClient.Timeout = TimeSpan.FromSeconds(60);
 
             var aria2NetClient = new Aria2NetClient(Settings.Get.DownloadClient.Aria2cUrl, Settings.Get.DownloadClient.Aria2cSecret, httpClient, 1);
 
