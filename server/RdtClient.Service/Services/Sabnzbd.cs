@@ -216,12 +216,12 @@ public class Sabnzbd(ILogger<Sabnzbd> logger, Torrents torrents, AppSettings app
 
     public virtual List<String> GetCategories()
     {
-        var categoryList = (Settings.Get.General.Categories ?? "")
-                           .Split(",", StringSplitOptions.RemoveEmptyEntries)
-                           .Select(m => m.Trim())
-                           .Where(m => m != "*")
-                           .Distinct(StringComparer.CurrentCultureIgnoreCase)
-                           .ToList();
+        // CategoryParser handles both the legacy comma-list and the Phase-1 JSON form so
+        // SABnzbd's category list stays correct once the user saves through the new UI.
+        var categoryList = CategoryParser.Names(Settings.Get.General.Categories)
+                                         .Where(m => m != "*")
+                                         .Distinct(StringComparer.CurrentCultureIgnoreCase)
+                                         .ToList();
 
         categoryList.Insert(0, "*");
 

@@ -48,7 +48,7 @@ public class DbSettingsGeneral
     public Int32 UnpackLimit { get; set; } = 1;
 
     [DisplayName("Categories")]
-    [Description("Expose these categories through the QBittorrent API. Define multiple categories by separating them with a comma.")]
+    [Description("Categories surfaced through the QBittorrent API and the Add Magnet UI. Each category has three independent auto-remove toggles that fire when a torrent in that category finishes downloading: Dashboard (clears it from this UI), Provider (releases the slot at the debrid host), and Local files (deletes the downloaded files on disk). Mix and match per category.")]
     public String? Categories { get; set; } = null;
 
     [DisplayName("Run external program on torrent completion")]

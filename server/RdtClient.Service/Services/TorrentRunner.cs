@@ -222,6 +222,14 @@ public class TorrentRunner(
 
                         await downloads.Reset(downloadId);
                         await downloads.UpdateRetryCount(downloadId, download.RetryCount + 1);
+                        // Surface the transient error to the UI immediately. Reset() clears
+                        // Error along with the rest of the run state, so we write it back here.
+                        // The combination (Error set, Completed null, RetryCount > 0) signals
+                        // "actively retrying" to the status pipe — distinct from the final
+                        // failure state below (Error set + Completed set). Without this, the
+                        // UI saw a healthy-looking in-flight download until all retries
+                        // exhausted, which could be a couple of minutes of misleading "0%".
+                        await downloads.UpdateError(downloadId, downloadClient.Error);
                     }
                     else
                     {
@@ -235,6 +243,8 @@ public class TorrentRunner(
                 {
                     Log($"Download finished successfully", download, download.Torrent);
 
+                    // Clear any leftover transient retry error from a previous failed attempt.
+                    await downloads.UpdateError(downloadId, null);
                     await downloads.UpdateDownloadFinished(downloadId, DateTimeOffset.UtcNow);
                     await downloads.UpdateUnpackingQueued(downloadId, DateTimeOffset.UtcNow);
                 }
@@ -419,8 +429,37 @@ public class TorrentRunner(
         var completeTorrents = allTorrents.Where(m => m.Completed != null);
         var torrentsToDelete = completeTorrents.Where(m => DateTimeOffset.UtcNow >= m.Completed?.AddMinutes(m.FinishedActionDelay) && m.Error == null);
 
+        // Parse the Categories setting once per tick; the inner loop just does case-insensitive
+        // name lookups against the resulting list. Avoids re-parsing the same JSON N times.
+        var categoriesForTick = CategoryParser.Parse(Settings.Get.General.Categories);
+
         foreach (var torrent in torrentsToDelete)
         {
+            // Per-category override: General:Categories[*] can independently opt the torrent's
+            // category into removing from the rdt-client dashboard, the debrid provider, and/or
+            // the local files on disk. If any flag is set we bypass the FinishedAction enum
+            // (which only encodes 4 fixed combinations) and call Delete() with the exact flags.
+            // The resolver also applies the Symlink-keeps-provider safety; see its tests.
+            var category = String.IsNullOrEmpty(torrent.Category)
+                ? null
+                : categoriesForTick.FirstOrDefault(c => String.Equals(c.Name, torrent.Category, StringComparison.OrdinalIgnoreCase));
+            var decision = CategoryAutoRemoveResolver.Resolve(category, torrent.DownloadClient);
+
+            if (decision.HasValue)
+            {
+                var d = decision.Value;
+
+                if (d.SymlinkSuppressedProvider)
+                {
+                    Log($"Symlink client: skipping provider removal for category '{torrent.Category}' to keep the symlink target alive", torrent);
+                }
+
+                Log($"Per-category cleanup for '{torrent.Category}': dashboard={d.RemoveDashboard}, provider={d.RemoveProvider}, localFiles={d.RemoveLocalFiles}", torrent);
+                await torrents.Delete(torrent.TorrentId, d.RemoveDashboard, d.RemoveProvider, d.RemoveLocalFiles);
+
+                continue;
+            }
+
             if (torrent.DownloadClient == Data.Enums.DownloadClient.Symlink)
             {
                 switch (torrent.FinishedAction)

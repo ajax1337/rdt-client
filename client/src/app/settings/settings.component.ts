@@ -37,6 +37,24 @@ export class SettingsComponent implements OnInit {
 
   public canRegisterMagnetHandler = false;
 
+  public categoryRows: {
+    name: string;
+    removeFromDashboard: boolean;
+    removeFromProvider: boolean;
+    removeLocalFiles: boolean;
+  }[] = [];
+
+  // Symlink Downloader enum index. Kept in sync with RdtClient.Data.Enums.DownloadClient.
+  private static readonly DOWNLOAD_CLIENT_SYMLINK = 2;
+
+  public get isSymlinkMode(): boolean {
+    const v = this.findSetting('DownloadClient:Client')?.value;
+    if (v === null || v === undefined) {
+      return false;
+    }
+    return Number(v) === SettingsComponent.DOWNLOAD_CLIENT_SYMLINK;
+  }
+
   ngOnInit(): void {
     this.reset();
     this.canRegisterMagnetHandler = !!(window.isSecureContext && 'registerProtocolHandler' in navigator);
@@ -49,7 +67,108 @@ export class SettingsComponent implements OnInit {
       for (let tab of this.tabs) {
         tab.settings = settings.filter((m) => m.key.indexOf(`${tab.key}:`) > -1);
       }
+
+      const categoriesSetting = this.findSetting('General:Categories');
+      this.categoryRows = this.parseCategoriesValue(categoriesSetting?.value as string | null | undefined);
     });
+  }
+
+  public addCategoryRow(): void {
+    this.categoryRows.push({ name: '', removeFromDashboard: false, removeFromProvider: false, removeLocalFiles: false });
+    this.syncCategories();
+  }
+
+  public removeCategoryRow(index: number): void {
+    this.categoryRows.splice(index, 1);
+    this.syncCategories();
+  }
+
+  public syncCategories(): void {
+    const categoriesSetting = this.findSetting('General:Categories');
+    if (!categoriesSetting) {
+      return;
+    }
+
+    const cleaned = this.categoryRows
+      .map((r) => ({
+        name: (r.name ?? '').trim(),
+        removeFromDashboard: !!r.removeFromDashboard,
+        removeFromProvider: !!r.removeFromProvider,
+        removeLocalFiles: !!r.removeLocalFiles,
+      }))
+      .filter((r) => r.name.length > 0);
+
+    categoriesSetting.value = JSON.stringify(cleaned);
+  }
+
+  private findSetting(key: string): Setting | undefined {
+    for (const tab of this.tabs) {
+      for (const s of tab.settings ?? []) {
+        if (s.key === key) {
+          return s;
+        }
+      }
+    }
+    return undefined;
+  }
+
+  private parseCategoriesValue(raw: string | null | undefined): {
+    name: string;
+    removeFromDashboard: boolean;
+    removeFromProvider: boolean;
+    removeLocalFiles: boolean;
+  }[] {
+    if (!raw) {
+      return [];
+    }
+
+    const trimmed = raw.trim();
+    if (trimmed.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          return parsed
+            .filter(
+              (c: { name?: unknown }) => c && typeof c.name === 'string' && (c.name as string).trim().length > 0,
+            )
+            .map(
+              (c: {
+                name: string;
+                autoRemoveOnFinish?: unknown;
+                removeFromDashboard?: unknown;
+                removeFromProvider?: unknown;
+                removeLocalFiles?: unknown;
+              }) => {
+                const dashboard = !!c.removeFromDashboard;
+                const provider = !!c.removeFromProvider;
+                const local = !!c.removeLocalFiles;
+                // Migrate the legacy single-flag form to "dashboard + provider" only if no
+                // granular flag is set yet — newer choices always win.
+                const legacy = !!c.autoRemoveOnFinish && !dashboard && !provider && !local;
+                return {
+                  name: String(c.name).trim(),
+                  removeFromDashboard: legacy ? true : dashboard,
+                  removeFromProvider: legacy ? true : provider,
+                  removeLocalFiles: local,
+                };
+              },
+            );
+        }
+      } catch {
+        // fall through to legacy comma-list parse
+      }
+    }
+
+    return raw
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0)
+      .map((name) => ({
+        name,
+        removeFromDashboard: false,
+        removeFromProvider: false,
+        removeLocalFiles: false,
+      }));
   }
 
   public ok(): void {

@@ -8,6 +8,7 @@ using RdtClient.Service.Services;
 
 namespace RdtClient.Service.Test.Services;
 
+[Collection("Settings")]
 public class SabnzbdTest
 {
     private readonly AppSettings _appSettings = new()
@@ -411,6 +412,29 @@ public class SabnzbdTest
         Assert.Contains("TV", result);
         Assert.Contains("Music", result);
         Assert.DoesNotContain("Movie", result);
+        Assert.Equal(3, result.Count);
+    }
+
+    [Fact]
+    public void GetCategories_HandlesPhase1JsonShape()
+    {
+        // Phase 1 stores Categories as a JSON list of {name, removeFromDashboard, removeFromProvider, removeLocalFiles}.
+        // SABnzbd's category list must still extract just the names so external NZB clients (Sonarr/Radarr)
+        // see the same flat list they always have.
+        _torrentsMock.Setup(t => t.Get()).ReturnsAsync(new List<Torrent>());
+
+        SettingData.Get.General.Categories =
+            """[{"name":"TV","removeFromDashboard":true},{"name":"Music","removeFromProvider":true,"removeLocalFiles":true}]""";
+
+        var sabnzbd = new Sabnzbd(_loggerMock.Object, _torrentsMock.Object, _appSettings);
+
+        // Act
+        var result = sabnzbd.GetCategories();
+
+        // Assert
+        Assert.Equal("*", result[0]);
+        Assert.Contains("TV", result);
+        Assert.Contains("Music", result);
         Assert.Equal(3, result.Count);
     }
 }

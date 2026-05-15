@@ -1,3 +1,5 @@
+// The new navbar is sticky (not fixed), so the main-list section no longer
+// needs a 6em offset to clear it. Keep a small breathing space below the bar.
 .main-list {
-  padding-top: 6em;
+  padding-top: 1.25rem;
 }

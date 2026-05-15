@@ -66,16 +66,36 @@ RUN \
    mkdir -p /usr/share/dotnet
 
 RUN \
-   if [ "$TARGETPLATFORM" = "linux/arm/v7" ] ; then \
-   wget https://builds.dotnet.microsoft.com/dotnet/aspnetcore/Runtime/10.0.0/aspnetcore-runtime-10.0.0-linux-musl-arm.tar.gz && \
-   tar zxf aspnetcore-runtime-10.0.0-linux-musl-arm.tar.gz -C /usr/share/dotnet ; \
-   elif [ "$TARGETPLATFORM" = "linux/arm64" ] ; then \
-   wget https://builds.dotnet.microsoft.com/dotnet/aspnetcore/Runtime/10.0.0/aspnetcore-runtime-10.0.0-linux-musl-arm64.tar.gz && \
-   tar zxf aspnetcore-runtime-10.0.0-linux-musl-arm64.tar.gz -C /usr/share/dotnet ; \
-   else \
-   wget https://builds.dotnet.microsoft.com/dotnet/aspnetcore/Runtime/10.0.0/aspnetcore-runtime-10.0.0-linux-musl-x64.tar.gz && \
-   tar zxf aspnetcore-runtime-10.0.0-linux-musl-x64.tar.gz -C /usr/share/dotnet ; \
-   fi
+   set -eu ; \
+   TP="${TARGETPLATFORM:-}" ; \
+   case "$(uname -m)" in \
+     aarch64) HOST_TP=linux/arm64 ;; \
+     armv7l)  HOST_TP=linux/arm/v7 ;; \
+     x86_64)  HOST_TP=linux/amd64 ;; \
+     *)       HOST_TP="" ;; \
+   esac ; \
+   if [ -z "$TP" ]; then \
+     if [ -n "$HOST_TP" ]; then \
+       TP="$HOST_TP" ; \
+       echo "INFO: TARGETPLATFORM unset, derived from host arch ($(uname -m)) -> ${TP}" ; \
+     else \
+       echo "ERROR: TARGETPLATFORM unset and host arch $(uname -m) is not in {x86_64, aarch64, armv7l}. Pass --build-arg TARGETPLATFORM=linux/<amd64|arm64|arm/v7> or use 'docker buildx build --platform ...'." >&2 ; \
+       exit 1 ; \
+     fi ; \
+   fi ; \
+   if [ -n "$HOST_TP" ] && [ "$TP" != "$HOST_TP" ]; then \
+     echo "WARN: TARGETPLATFORM=${TP} differs from host arch (${HOST_TP}). Cross-compile only works under buildx; classic 'docker build --platform' silently produces host-arch binaries — verify the final image's dotnet binary matches the target." ; \
+   fi ; \
+   case "$TP" in \
+     linux/arm/v7) ARCH=arm ;; \
+     linux/arm64)  ARCH=arm64 ;; \
+     linux/amd64)  ARCH=x64 ;; \
+     *) echo "ERROR: unsupported TARGETPLATFORM='$TP' — expected linux/amd64, linux/arm64, or linux/arm/v7." >&2 ; exit 1 ;; \
+   esac ; \
+   echo "**** Installing aspnetcore-runtime for ${TP} (musl-${ARCH}) ****" ; \
+   wget -q "https://builds.dotnet.microsoft.com/dotnet/aspnetcore/Runtime/10.0.0/aspnetcore-runtime-10.0.0-linux-musl-${ARCH}.tar.gz" ; \
+   tar zxf "aspnetcore-runtime-10.0.0-linux-musl-${ARCH}.tar.gz" -C /usr/share/dotnet ; \
+   rm -f "aspnetcore-runtime-10.0.0-linux-musl-${ARCH}.tar.gz"
 
 RUN \
    echo "**** Setting permissions ****" && \

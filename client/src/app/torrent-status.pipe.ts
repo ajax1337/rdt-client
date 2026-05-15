@@ -11,6 +11,22 @@ export function getTorrentStatus(torrent: Torrent): string {
 
   const downloads = torrent.downloads ?? [];
 
+  // Real-time retry surfacing: TorrentRunner now persists the transient error on
+  // every aria2 failure (before each retry). (error set, completed null) = the
+  // current attempt failed and another retry is queued. (error set, completed set)
+  // = retries exhausted, permanent failure. Show both states with their actual
+  // error message instead of the misleading "downloading 0%" the UI used to show
+  // during retry cycles.
+  const failed = downloads.find((d) => d.error && d.completed != null);
+  if (failed) {
+    return `Download failed: ${failed.error}`;
+  }
+  const retrying = downloads.find((d) => d.error && d.completed == null);
+  if (retrying) {
+    const max = torrent.downloadRetryAttempts ?? 3;
+    return `Retrying (${retrying.retryCount}/${max}): ${retrying.error}`;
+  }
+
   if (downloads.length > 0) {
     let allFinished = true;
     let downloadingCount = 0;
@@ -66,9 +82,11 @@ export function getTorrentStatus(torrent: Torrent): string {
 
     if (downloadingCount > 0) {
       const progress = ((downloadingBytesDone / downloadingBytesTotal) || 0) * 100;
-      const speed = fileSizePipe.transform(downloadingSpeed, 'filesize') as string;
 
-      return `Downloading file ${downloadingCount + downloadedCount}/${downloads.length} (${progress.toFixed(2)}% - ${speed}/s)`;
+      // Speed is rendered in the dedicated SPEED column; leaving it out of the
+      // status pill keeps every row's pill at the same width and lets the
+      // dashboard read as evenly spaced columns instead of a ragged left edge.
+      return `Downloading file ${downloadingCount + downloadedCount}/${downloads.length} (${progress.toFixed(2)}%)`;
     }
 
     if (unpackingCount > 0) {
@@ -106,7 +124,7 @@ export function getTorrentStatus(torrent: Torrent): string {
         return 'Torrent stalled';
       }
 
-      return `Torrent downloading (${torrent.rdProgress}% - ${fileSizePipe.transform(torrent.rdSpeed, 'filesize') as string}/s)`;
+      return `Torrent downloading (${torrent.rdProgress}%)`;
     case RealDebridStatus.Processing:
       return 'Torrent processing';
     case RealDebridStatus.WaitingForFileSelection:

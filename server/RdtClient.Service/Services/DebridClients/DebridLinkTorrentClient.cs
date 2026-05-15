@@ -14,6 +14,11 @@ namespace RdtClient.Service.Services.DebridClients;
 
 public class DebridLinkClient(ILogger<DebridLinkClient> logger, IHttpClientFactory httpClientFactory, IDownloadableFileFilter fileFilter) : IDebridClient
 {
+    private static readonly JsonSerializerSettings JsonSerializerSettings = new()
+    {
+        NullValueHandling = NullValueHandling.Ignore
+    };
+
     public async Task<IList<DebridClientTorrent>> GetDownloads()
     {
         var page = 0;
@@ -140,7 +145,7 @@ public class DebridLinkClient(ILogger<DebridLinkClient> logger, IHttpClientFacto
 
             if (rdTorrent.Files != null)
             {
-                torrent.RdFiles = JsonConvert.SerializeObject(rdTorrent.Files);
+                torrent.RdFiles = JsonConvert.SerializeObject(rdTorrent.Files, JsonSerializerSettings);
             }
 
             torrent.ClientKind = Provider.DebridLink;

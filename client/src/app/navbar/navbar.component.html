@@ -1,67 +1,72 @@
-<nav class="navbar is-dark is-fixed-top" role="navigation" aria-label="main navigation">
-  <div class="navbar-brand">
-    <a class="navbar-item" routerLink="/">
-      <img src="assets/logo.png" />
+<nav class="navbar-shell" role="navigation" aria-label="main navigation">
+  <div class="navbar-inner">
+    <a class="navbar-brand" routerLink="/" aria-label="rdt-client home">
+      <img src="assets/logo.png" alt="RealDebrid Client" />
     </a>
 
-    <a
-      role="button"
-      class="navbar-burger burger"
+    <button
+      class="navbar-burger"
+      type="button"
       aria-label="menu"
-      aria-expanded="false"
-      [class.is-active]="showMobileMenu"
+      [attr.aria-expanded]="showMobileMenu"
       (click)="showMobileMenu = !showMobileMenu"
     >
-      <span aria-hidden="true"></span>
-      <span aria-hidden="true"></span>
-      <span aria-hidden="true"></span>
-    </a>
-  </div>
+      <span></span><span></span><span></span>
+    </button>
 
-  <div class="navbar-menu" [class.is-active]="showMobileMenu">
-    <div class="navbar-start">
-      <a class="navbar-item" routerLink="/">
-        <span class="icon">
-          <i class="fas fa-table" aria-hidden="true"></i>
-        </span>
-        <span>Torrents/NZBs</span>
+    <div class="navbar-links" [class.is-open]="showMobileMenu">
+      <a class="nav-link" routerLink="/" routerLinkActive="is-active" [routerLinkActiveOptions]="{ exact: true }">
+        <i class="fas fa-table" aria-hidden="true"></i><span>Torrents/NZBs</span>
       </a>
-      <a class="navbar-item" routerLink="/add" [queryParams]="{ type: 'torrent' }">
-        <span class="icon">
-          <i class="fas fa-plus" aria-hidden="true"></i>
-        </span>
-        <span>Add Torrent/NZB</span>
+      <a class="nav-link" routerLink="/add" routerLinkActive="is-active" [queryParams]="{ type: 'torrent' }">
+        <i class="fas fa-plus" aria-hidden="true"></i><span>Add Torrent/NZB</span>
       </a>
-      <a class="navbar-item" routerLink="/settings">
-        <span class="icon">
-          <i class="fas fa-cog" aria-hidden="true"></i>
-        </span>
-        <span>Settings</span>
+      <a class="nav-link" routerLink="/settings" routerLinkActive="is-active">
+        <i class="fas fa-cog" aria-hidden="true"></i><span>Settings</span>
       </a>
       @if (profile) {
-        <a class="navbar-item" href="{{ providerLink }}" target="_blank" rel="noopener">
-          <span class="icon">
-            <i class="fas fa-euro-sign" aria-hidden="true"></i>
-          </span>
+        <a class="nav-link nav-link--badge" [href]="providerLink" target="_blank" rel="noopener">
+          <i class="fas fa-euro-sign" aria-hidden="true"></i>
           @if (profile.expiration) {
-            <span>Premium Status: {{ profile.expiration | date }}</span>
+            <span>Premium · {{ profile.expiration | date: "mediumDate" }}</span>
           } @else {
-            <span class="no-premium">Not premium</span>
+            <span class="navbar-no-premium">Not premium</span>
           }
         </a>
       }
     </div>
 
-    <div class="navbar-end">
-      <div class="navbar-item has-dropdown is-hoverable">
-        <span class="navbar-link"> Account </span>
-
-        <div class="navbar-dropdown is-right">
-          <a class="navbar-item" routerLink="profile"> Profile </a>
-          <a class="navbar-item" (click)="logout()"> Logout </a>
-          <hr class="navbar-divider" />
-          <a href="https://github.com/rogerfar/rdt-client" target="_blank" class="navbar-item">Version {{ version }}</a>
-        </div>
+    <div class="navbar-trailing">
+      <div class="account-dropdown" (click)="$event.stopPropagation()">
+        <button
+          type="button"
+          class="nav-link nav-link--account"
+          (click)="accountMenuOpen = !accountMenuOpen"
+          [attr.aria-expanded]="accountMenuOpen"
+        >
+          <span>Account</span>
+          <i class="fas fa-chevron-down" [class.is-flipped]="accountMenuOpen" aria-hidden="true"></i>
+        </button>
+        @if (accountMenuOpen) {
+          <div class="account-dropdown__menu">
+            <a class="account-dropdown__item" routerLink="/profile" (click)="accountMenuOpen = false">
+              <i class="fas fa-user" aria-hidden="true"></i><span>Profile</span>
+            </a>
+            <button class="account-dropdown__item" type="button" (click)="logout(); accountMenuOpen = false">
+              <i class="fas fa-sign-out-alt" aria-hidden="true"></i><span>Logout</span>
+            </button>
+            <div class="account-dropdown__sep"></div>
+            <a
+              class="account-dropdown__item account-dropdown__item--quiet"
+              href="https://github.com/rogerfar/rdt-client"
+              target="_blank"
+              rel="noopener"
+              (click)="accountMenuOpen = false"
+            >
+              <i class="fas fa-tag" aria-hidden="true"></i><span>Version {{ version }}</span>
+            </a>
+          </div>
+        }
       </div>
     </div>
   </div>
@@ -73,12 +78,12 @@
   profile.latestVersion &&
   profile.currentVersion !== profile.latestVersion
 ) {
-  <div class="notification" [ngClass]="profile.isInsecure ? 'is-danger' : 'is-warning'">
+  <div class="navbar-update" [ngClass]="profile.isInsecure ? 'navbar-update--danger' : 'navbar-update--warn'">
     @if (profile.isInsecure) {
-      <span> Your current version is insecure. </span>
+      <strong>Your current version is insecure.</strong>
     }
     <span>
-      Version {{ profile.latestVersion }} of RealDebrid Client was found. You are currently on version
+      Version {{ profile.latestVersion }} of RealDebrid Client is available. You are on
       {{ profile.currentVersion }}.
     </span>
   </div>

@@ -10,6 +10,7 @@ using RdtClient.Service.Services;
 
 namespace RdtClient.Service.Test.BackgroundServices;
 
+[Collection("Settings")]
 public class WatchFolderCheckerTests : IDisposable
 {
     private readonly Mock<ILogger<WatchFolderChecker>> _loggerMock;

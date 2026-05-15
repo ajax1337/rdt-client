@@ -55,6 +55,11 @@ public class AllDebridNetClientFactory(ILogger<AllDebridNetClientFactory> logger
 public class AllDebridDebridClient(ILogger<AllDebridDebridClient> logger, IAllDebridNetClientFactory allDebridNetClientFactory, IDownloadableFileFilter fileFilter) : IDebridClient
 {
     private static readonly Int64 SessionId = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+    private static readonly JsonSerializerSettings JsonSerializerSettings = new()
+    {
+        NullValueHandling = NullValueHandling.Ignore
+    };
+
     private static List<DebridClientTorrent> _cache = [];
     private static Int64 _sessionCounter;
 
@@ -205,7 +210,7 @@ public class AllDebridDebridClient(ILogger<AllDebridDebridClient> logger, IAllDe
 
             if (torrentClientTorrent.Files != null && torrentClientTorrent.Files.Count != 0)
             {
-                torrent.RdFiles = JsonConvert.SerializeObject(torrentClientTorrent.Files);
+                torrent.RdFiles = JsonConvert.SerializeObject(torrentClientTorrent.Files, JsonSerializerSettings);
             }
 
             torrent.ClientKind = Provider.AllDebrid;

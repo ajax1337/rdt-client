@@ -8,16 +8,33 @@ import { TorrentService } from '../torrent.service';
 import { forkJoin, Observable } from 'rxjs';
 import { FormsModule } from '@angular/forms';
 import { NgClass, DecimalPipe, DatePipe } from '@angular/common';
-import { getTorrentStatus, TorrentStatusPipe } from '../torrent-status.pipe';
+import { getTorrentStatus } from '../torrent-status.pipe';
 import { SortDirection, getSortFieldValue, sortItems } from '../sort.pipe';
 import { FileSizePipe } from '../filesize.pipe';
 import { EtaPipe } from '../eta.pipe';
+
+type StatusKind = 'sending' | 'queued' | 'processing' | 'waiting' | 'downloading' | 'retrying' | 'finished' | 'error';
+
+// Window after a torrent is added during which we show "Sending to provider…" instead of
+// "Not Yet Added to Provider". 30 s covers TorBox's typical AddMagnet round-trip plus the
+// post-add UpdateTorrentClientData. After 30 s, if RdId is still null, something is wrong
+// (rate-limit, provider outage) and the user should see the truthful queued state.
+const OPTIMISTIC_SENDING_WINDOW_MS = 30_000;
+
+interface KpiSnapshot {
+  total: number;
+  active: number;
+  queued: number;
+  errors: number;
+  aggregateSpeed: number;
+  finished: number;
+}
 
 @Component({
   selector: 'app-torrent-table',
   templateUrl: './torrent-table.component.html',
   styleUrls: ['./torrent-table.component.scss'],
-  imports: [FormsModule, NgClass, DecimalPipe, DatePipe, TorrentStatusPipe, FileSizePipe, EtaPipe],
+  imports: [FormsModule, NgClass, DecimalPipe, DatePipe, FileSizePipe, EtaPipe],
   standalone: true,
 })
 export class TorrentTableComponent implements OnInit, OnDestroy {
@@ -28,10 +45,18 @@ export class TorrentTableComponent implements OnInit, OnDestroy {
 
   public torrents: Torrent[] = [];
   public sortedTorrents: Torrent[] = [];
+  public visibleTorrents: Torrent[] = [];
   public selectedTorrents: string[] = [];
   public error: string;
   public sortProperty = 'added';
   public sortDirection: SortDirection = 'desc';
+
+  public searchText = '';
+  public statusFilter: 'all' | StatusKind = 'all';
+  public categoryFilter = '';
+  public availableCategories: string[] = [];
+
+  public kpis: KpiSnapshot = { total: 0, active: 0, queued: 0, errors: 0, aggregateSpeed: 0, finished: 0 };
 
   public isDeleteModalActive: boolean;
   public deleteError: string;
@@ -73,7 +98,6 @@ export class TorrentTableComponent implements OnInit, OnDestroy {
     };
     this.mobileQuery.addEventListener('change', this.mobileQueryListener);
 
-    // Load persisted sort settings (if any)
     try {
       const sp = localStorage.getItem('torrentTable.sortProperty');
       const sd = localStorage.getItem('torrentTable.sortDirection');
@@ -138,7 +162,6 @@ export class TorrentTableComponent implements OnInit, OnDestroy {
       this.sortDirection = 'desc';
     }
 
-    // Persist sort settings
     try {
       localStorage.setItem('torrentTable.sortProperty', this.sortProperty);
       localStorage.setItem('torrentTable.sortDirection', this.sortDirection);
@@ -147,6 +170,33 @@ export class TorrentTableComponent implements OnInit, OnDestroy {
     }
 
     this.applySorting();
+  }
+
+  public sortGlyph(property: string): string {
+    if (this.sortProperty !== property) {
+      return '';
+    }
+    return this.sortDirection === 'asc' ? '▲' : '▼';
+  }
+
+  public setStatusFilter(kind: 'all' | StatusKind): void {
+    this.statusFilter = kind;
+    this.applyFiltering();
+  }
+
+  public onSearchChange(): void {
+    this.applyFiltering();
+  }
+
+  public onCategoryFilterChange(): void {
+    this.applyFiltering();
+  }
+
+  public clearFilters(): void {
+    this.searchText = '';
+    this.statusFilter = 'all';
+    this.categoryFilter = '';
+    this.applyFiltering();
   }
 
   public openTorrent(torrentId: string): void {
@@ -351,8 +401,139 @@ export class TorrentTableComponent implements OnInit, OnDestroy {
     this.mobileQuery?.removeEventListener('change', this.mobileQueryListener);
   }
 
+  // ----------------------------------------------------------------------
+  // Derived view state — KPIs, status kind mapping, filters
+  // ----------------------------------------------------------------------
+
+  public statusKind(torrent: Torrent): StatusKind {
+    if (torrent.error) {
+      return 'error';
+    }
+    // Per-download retry / permanent-failure detection. TorrentRunner now persists
+    // the transient error before each retry, so the SignalR push contains it within
+    // ~1 s of the failure. Surface that to the pill so the user sees the actual
+    // state instead of a fake "downloading".
+    const downloads = torrent.downloads ?? [];
+    if (downloads.some((d) => d.error && d.completed != null)) {
+      return 'error';
+    }
+    if (downloads.some((d) => d.error && d.completed == null)) {
+      return 'retrying';
+    }
+    // Optimistic "sending" while the dequeue HTTP call to the provider is in flight.
+    // Gate on: no provider id yet + queued/unset status + freshly added.
+    if (!torrent.rdId && (torrent.rdStatus === 0 || torrent.rdStatus == null) && this.isFreshlyAdded(torrent)) {
+      return 'sending';
+    }
+    switch (torrent.rdStatus) {
+      case 0:
+        return 'queued';
+      case 1:
+        return 'processing';
+      case 2:
+        return 'waiting';
+      case 3:
+        return 'downloading';
+      case 4:
+      case 5:
+        return 'finished';
+      case 99:
+        return 'error';
+      default:
+        return 'queued';
+    }
+  }
+
+  private isFreshlyAdded(torrent: Torrent): boolean {
+    if (!torrent.added) {
+      return false;
+    }
+    const addedMs = new Date(torrent.added).getTime();
+    if (Number.isNaN(addedMs)) {
+      return false;
+    }
+    return Date.now() - addedMs < OPTIMISTIC_SENDING_WINDOW_MS;
+  }
+
+  public progressPercent(torrent: Torrent): number {
+    const p = Number(torrent.rdProgress ?? 0);
+    if (Number.isNaN(p)) return 0;
+    return Math.min(100, Math.max(0, p));
+  }
+
+  public torrentSpeed(torrent: Torrent): number {
+    // Prefer the server's aggregated rdSpeed; fall back to summing per-download speeds.
+    if (typeof torrent.rdSpeed === 'number' && torrent.rdSpeed > 0) {
+      return torrent.rdSpeed;
+    }
+    return (torrent.downloads ?? []).reduce((acc, d) => acc + (d.speed ?? 0), 0);
+  }
+
+  public typeBadge(torrent: Torrent): { label: string; cls: string } {
+    return torrent.type === 1
+      ? { label: 'NZB', cls: 'bg-violet-500/15 text-violet-300 ring-violet-500/30' }
+      : { label: 'TOR', cls: 'bg-sky-500/15 text-sky-300 ring-sky-500/30' };
+  }
+
+  public statusLabel(torrent: Torrent): string {
+    if (this.statusKind(torrent) === 'sending') {
+      return 'Sending to provider…';
+    }
+    return torrent.statusText ?? getTorrentStatus(torrent);
+  }
+
+  // Surface the real torrent name from metadata. TorBox returns a magnet-URI-like
+  // string in `rdName` when the magnet had no &dn= display name (we have seen
+  // values like "magnet:?xt=urn:btih:<hash>" and the stripped form
+  // "magnetxt=urnbtih<hash>"). In that case the actual file/directory name lives
+  // in `torrent.files[0].path` once the provider has parsed the torrent.
+  public getDisplayName(torrent: Torrent): string {
+    const raw = (torrent.rdName ?? '').trim();
+    if (raw && !this.looksLikeMagnetFallback(raw, torrent.hash)) {
+      return raw;
+    }
+
+    const fromFiles = this.deriveNameFromFiles(torrent);
+    if (fromFiles) {
+      return fromFiles;
+    }
+
+    return raw || torrent.hash || '—';
+  }
+
+  private looksLikeMagnetFallback(name: string, hash?: string): boolean {
+    const lower = name.toLowerCase();
+    if (lower.startsWith('magnet:?xt=') || lower.startsWith('magnetxt=')) {
+      return true;
+    }
+    if (hash && lower.includes(hash.toLowerCase())) {
+      return true;
+    }
+    return false;
+  }
+
+  private deriveNameFromFiles(torrent: Torrent): string | null {
+    const files = torrent.files;
+    if (!files || files.length === 0) {
+      return null;
+    }
+    const firstPath = (files[0].path ?? '').replace(/^\/+/, '').trim();
+    if (!firstPath) {
+      return null;
+    }
+    // Multi-file torrents typically share a top-level directory — surface that
+    // as the display name. Single-file torrents fall through to the filename.
+    const slashIndex = firstPath.indexOf('/');
+    return slashIndex > 0 ? firstPath.substring(0, slashIndex) : firstPath;
+  }
+
+  public isLowSpace(): boolean {
+    return !!this.diskSpaceStatus?.isPaused;
+  }
+
   private setTorrents(torrents: Torrent[]): void {
     this.torrents = torrents;
+    this.refreshDerivedFromTorrents();
     this.pruneSelectedTorrents();
     this.applySorting();
   }
@@ -370,6 +551,51 @@ export class TorrentTableComponent implements OnInit, OnDestroy {
           return getSortFieldValue(torrent, field);
       }
     });
+    this.applyFiltering();
+  }
+
+  private applyFiltering(): void {
+    const search = this.searchText.trim().toLowerCase();
+    this.visibleTorrents = this.sortedTorrents.filter((t) => {
+      if (search) {
+        const haystack = `${t.rdName ?? ''} ${t.category ?? ''} ${t.hash ?? ''}`.toLowerCase();
+        if (!haystack.includes(search)) {
+          return false;
+        }
+      }
+      if (this.statusFilter !== 'all') {
+        // 'sending' is a sub-state of 'queued' (no provider id yet) — keep them in the same bucket.
+        const kind = this.statusKind(t);
+        const bucket = kind === 'sending' ? 'queued' : kind;
+        if (bucket !== this.statusFilter) {
+          return false;
+        }
+      }
+      if (this.categoryFilter && (t.category ?? '') !== this.categoryFilter) {
+        return false;
+      }
+      return true;
+    });
+  }
+
+  private refreshDerivedFromTorrents(): void {
+    const cats = new Set<string>();
+    let active = 0;
+    let queued = 0;
+    let errors = 0;
+    let finished = 0;
+    let aggregateSpeed = 0;
+    for (const t of this.torrents) {
+      if (t.category) cats.add(t.category);
+      const kind = this.statusKind(t);
+      if (kind === 'downloading' || kind === 'processing' || kind === 'waiting' || kind === 'retrying') active++;
+      if (kind === 'queued' || kind === 'sending') queued++;
+      if (kind === 'error') errors++;
+      if (kind === 'finished') finished++;
+      aggregateSpeed += this.torrentSpeed(t);
+    }
+    this.availableCategories = Array.from(cats).sort((a, b) => a.localeCompare(b));
+    this.kpis = { total: this.torrents.length, active, queued, errors, aggregateSpeed, finished };
   }
 
   private getSelectedTorrentModels(): Torrent[] {

@@ -41,6 +41,7 @@ internal class Mocks
     }
 }
 
+[Collection("Settings")]
 public class TorrentsTest
 {
     public static TheoryData<Torrent, List<Download>> TorrentAndDownload()

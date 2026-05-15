@@ -1,7 +1,9 @@
 ﻿using Microsoft.Extensions.Logging;
 using RdtClient.Data.Enums;
 using RdtClient.Data.Models.Data;
+using RdtClient.Data.Models.Internal;
 using RdtClient.Data.Models.QBittorrent;
+using RdtClient.Service.Helpers;
 
 namespace RdtClient.Service.Services;
 
@@ -535,11 +537,7 @@ public class QBittorrent(ILogger<QBittorrent> logger, Settings settings, Authent
                                          .Select(m => m.Category!.ToLower())
                                          .ToList();
 
-        var categoryList = (Settings.Get.General.Categories ?? "")
-                           .Split(",", StringSplitOptions.RemoveEmptyEntries)
-                           .Distinct(StringComparer.CurrentCultureIgnoreCase)
-                           .Select(m => m.Trim())
-                           .ToList();
+        var categoryList = CategoryParser.Names(Settings.Get.General.Categories);
 
         torrentsToGroup.AddRange(categoryList);
 
@@ -568,22 +566,14 @@ public class QBittorrent(ILogger<QBittorrent> logger, Settings settings, Authent
 
         category = category.Trim();
 
-        var categoriesSetting = Settings.Get.General.Categories;
+        var categoryList = CategoryParser.Parse(Settings.Get.General.Categories).ToList();
 
-        var categoryList = (categoriesSetting ?? "")
-                           .Split(",", StringSplitOptions.RemoveEmptyEntries)
-                           .Distinct(StringComparer.CurrentCultureIgnoreCase)
-                           .Select(m => m.Trim())
-                           .ToList();
-
-        if (!categoryList.Contains(category))
+        if (!categoryList.Any(c => String.Equals(c.Name, category, StringComparison.OrdinalIgnoreCase)))
         {
-            categoryList.Add(category);
+            categoryList.Add(new DbCategory { Name = category, AutoRemoveOnFinish = false });
         }
 
-        categoriesSetting = String.Join(",", categoryList);
-
-        await settings.Update("General:Categories", categoriesSetting);
+        await settings.Update("General:Categories", CategoryParser.Serialize(categoryList));
     }
 
     public async Task CategoryRemove(String? category)
@@ -595,19 +585,11 @@ public class QBittorrent(ILogger<QBittorrent> logger, Settings settings, Authent
 
         category = category.Trim();
 
-        var categoriesSetting = Settings.Get.General.Categories;
+        var categoryList = CategoryParser.Parse(Settings.Get.General.Categories)
+                                         .Where(c => !String.Equals(c.Name, category, StringComparison.OrdinalIgnoreCase))
+                                         .ToList();
 
-        var categoryList = (categoriesSetting ?? "")
-                           .Split(",", StringSplitOptions.RemoveEmptyEntries)
-                           .Distinct(StringComparer.CurrentCultureIgnoreCase)
-                           .Select(m => m.Trim())
-                           .ToList();
-
-        categoryList = categoryList.Where(m => m != category).ToList();
-
-        categoriesSetting = String.Join(",", categoryList);
-
-        await settings.Update("General:Categories", categoriesSetting);
+        await settings.Update("General:Categories", CategoryParser.Serialize(categoryList));
     }
 
     public async Task TorrentsTopPrio(String hash)

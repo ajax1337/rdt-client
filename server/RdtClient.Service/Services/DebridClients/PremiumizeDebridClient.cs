@@ -13,6 +13,11 @@ namespace RdtClient.Service.Services.DebridClients;
 
 public class PremiumizeDebridClient(ILogger<PremiumizeDebridClient> logger, IHttpClientFactory httpClientFactory, IDownloadableFileFilter fileFilter) : IDebridClient
 {
+    private static readonly JsonSerializerSettings JsonSerializerSettings = new()
+    {
+        NullValueHandling = NullValueHandling.Ignore
+    };
+
     public async Task<IList<DebridClientTorrent>> GetDownloads()
     {
         var results = await GetClient().Transfers.ListAsync();
@@ -131,7 +136,7 @@ public class PremiumizeDebridClient(ILogger<PremiumizeDebridClient> logger, IHtt
 
             if (torrentClientTorrent.Files != null)
             {
-                torrent.RdFiles = JsonConvert.SerializeObject(torrentClientTorrent.Files);
+                torrent.RdFiles = JsonConvert.SerializeObject(torrentClientTorrent.Files, JsonSerializerSettings);
             }
 
             torrent.ClientKind = Provider.Premiumize;

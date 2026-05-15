@@ -19,41 +19,112 @@
         <h3 class="title is-3" style="margin-top: 1.2rem">{{ setting.displayName }}</h3>
       }
       <div class="field">
-        @if (setting.type !== "Boolean" && setting.type !== "Object") {
+        @if (setting.key === "General:Categories") {
           <label class="label">{{ setting.displayName }}</label>
+          @if (isSymlinkMode) {
+            <div class="categories-symlink-warning" role="note">
+              <strong>Symlink mode is active.</strong>
+              Removing a torrent from the debrid provider would break the symlink target, so the
+              <em>Provider</em> toggle is automatically suppressed for completed torrents while you
+              run Symlink Downloader. The Dashboard and Local-files toggles still apply.
+            </div>
+          }
+          <div class="categories-editor">
+            @for (row of categoryRows; track $index; let i = $index) {
+              <div class="category-card">
+                <div class="category-card__header">
+                  <input
+                    class="input"
+                    type="text"
+                    [(ngModel)]="row.name"
+                    (ngModelChange)="syncCategories()"
+                    placeholder="Category name"
+                  />
+                  <button
+                    type="button"
+                    class="category-card__remove"
+                    (click)="removeCategoryRow(i)"
+                    [attr.aria-label]="'Remove category ' + (row.name || 'unnamed')"
+                    title="Remove this category"
+                  >
+                    ×
+                  </button>
+                </div>
+                <div class="category-card__actions">
+                  <span class="category-card__actions-label">Auto-remove on finish</span>
+                  <label class="category-card__toggle" [class.category-card__toggle--active]="row.removeFromDashboard">
+                    <input
+                      type="checkbox"
+                      [(ngModel)]="row.removeFromDashboard"
+                      (ngModelChange)="syncCategories()"
+                    />
+                    Dashboard
+                  </label>
+                  <label class="category-card__toggle" [class.category-card__toggle--active]="row.removeFromProvider">
+                    <input
+                      type="checkbox"
+                      [(ngModel)]="row.removeFromProvider"
+                      (ngModelChange)="syncCategories()"
+                    />
+                    Provider
+                  </label>
+                  <label class="category-card__toggle" [class.category-card__toggle--active]="row.removeLocalFiles">
+                    <input
+                      type="checkbox"
+                      [(ngModel)]="row.removeLocalFiles"
+                      (ngModelChange)="syncCategories()"
+                    />
+                    Local files
+                  </label>
+                </div>
+              </div>
+            }
+            <button
+              type="button"
+              class="button is-small is-info is-light category-add"
+              (click)="addCategoryRow()"
+            >
+              + Add category
+            </button>
+          </div>
+          <p class="help" [innerHtml]="setting.description | nl2br"></p>
+        } @else {
+          @if (setting.type !== "Boolean" && setting.type !== "Object") {
+            <label class="label">{{ setting.displayName }}</label>
+          }
+          @switch (setting.type) {
+            @case ("String") {
+              <div class="control">
+                <input class="input" type="text" [(ngModel)]="setting.value" />
+              </div>
+            }
+            @case ("Int32") {
+              <div class="control">
+                <input class="input" type="number" [(ngModel)]="setting.value" />
+              </div>
+            }
+            @case ("Boolean") {
+              <label class="checkbox">
+                <input type="checkbox" [(ngModel)]="setting.value" />
+                {{ setting.displayName }}
+              </label>
+            }
+            @case ("Enum") {
+              <div class="control select is-fullwidth">
+                <select [(ngModel)]="setting.value">
+                  @for (kvp of setting.enumValues | keyvalue; track kvp) {
+                    <option [value]="kvp.key">{{ kvp.value }}</option>
+                  }
+                </select>
+              </div>
+            }
+            @case ("Object") {}
+            @default {
+              <div class="control">Invalid setting type {{ setting.type }}</div>
+            }
+          }
+          <p class="help" [innerHtml]="setting.description | nl2br"></p>
         }
-        @switch (setting.type) {
-          @case ("String") {
-            <div class="control">
-              <input class="input" type="text" [(ngModel)]="setting.value" />
-            </div>
-          }
-          @case ("Int32") {
-            <div class="control">
-              <input class="input" type="number" [(ngModel)]="setting.value" />
-            </div>
-          }
-          @case ("Boolean") {
-            <label class="checkbox">
-              <input type="checkbox" [(ngModel)]="setting.value" />
-              {{ setting.displayName }}
-            </label>
-          }
-          @case ("Enum") {
-            <div class="control select is-fullwidth">
-              <select [(ngModel)]="setting.value">
-                @for (kvp of setting.enumValues | keyvalue; track kvp) {
-                  <option [value]="kvp.key">{{ kvp.value }}</option>
-                }
-              </select>
-            </div>
-          }
-          @case ("Object") {}
-          @default {
-            <div class="control">Invalid setting type {{ setting.type }}</div>
-          }
-        }
-        <p class="help" [innerHtml]="setting.description | nl2br"></p>
         @if (setting.key === "DownloadClient:Aria2cSecret") {
           <button
             class="button is-warning"

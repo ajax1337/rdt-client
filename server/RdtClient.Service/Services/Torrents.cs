@@ -14,6 +14,7 @@ using RdtClient.Data.Models.Data;
 using RdtClient.Data.Models.DebridClient;
 using RdtClient.Data.Models.Internal;
 using RdtClient.Service.BackgroundServices;
+using RdtClient.Service.BackgroundServices;
 using RdtClient.Service.Helpers;
 using RdtClient.Service.Services.DebridClients;
 using RdtClient.Service.Wrappers;
@@ -399,13 +400,29 @@ public class Torrents(
             }
 
             await torrentData.UpdateRdId(torrent, id);
-
-            await UpdateTorrentClientData(torrent);
         }
         finally
         {
             RealDebridUpdateLock.Release();
         }
+
+        // UpdateTorrentClientData moved outside the lock — it's another HTTP round-trip
+        // to the provider, and holding the lock for it serialized every Add at the cost
+        // of ~1–2s per torrent. The worst-case race is that ProviderUpdater's next poll
+        // interleaves and overwrites the same fields with the same data; both converge.
+        // RequestWarmPoll then tells ProviderUpdater to poll at 1s for the next 60s so
+        // the dashboard reacts to TorBox's download_present flip without waiting a full
+        // CheckInterval.
+        try
+        {
+            await UpdateTorrentClientData(torrent);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Post-dequeue UpdateTorrentClientData failed; the next ProviderUpdater tick will refresh");
+        }
+
+        ProviderUpdater.RequestWarmPoll();
     }
 
     public async Task<IList<DebridClientAvailableFile>> GetAvailableFiles(String hash)
