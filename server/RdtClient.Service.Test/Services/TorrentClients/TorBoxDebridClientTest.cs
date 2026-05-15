@@ -15,6 +15,7 @@ using LogLevel = Microsoft.Extensions.Logging.LogLevel;
 
 namespace RdtClient.Service.Test.Services.TorrentClients;
 
+[Collection("Settings")]
 public class TorBoxDebridClientTest
 {
     private readonly Mock<IRateLimitCoordinator> _coordinatorMock;
@@ -452,6 +453,85 @@ public class TorBoxDebridClientTest
         Assert.Single(result);
         Assert.Equal("https://torbox.app/fakedl/12345/zip", result[0].RestrictedLink);
         Assert.Equal("TestTorrent.zip", result[0].FileName);
+    }
+
+    [Fact]
+    public async Task GetDownloadInfos_UsesCachedProviderDownloadId_WhenAvailable()
+    {
+        // Arrange
+        var files = new List<DebridClientFile>
+        {
+            new()
+            {
+                Id = 1,
+                Path = "file1.mkv",
+                Bytes = 1000,
+                ProviderDownloadId = 54321
+            }
+        };
+
+        var torrent = new Torrent
+        {
+            Hash = "test-hash",
+            RdFiles = JsonConvert.SerializeObject(files)
+        };
+
+        Settings.Get.Provider.PreferZippedDownloads = false;
+
+        var torrentsApiMock = new Mock<ITorrentsApi>();
+        var clientMock = new Mock<TorBoxDebridClient>(_loggerMock.Object, _httpClientFactoryMock.Object, _fileFilterMock.Object, _coordinatorMock.Object);
+        var torBoxClientMock = new Mock<ITorBoxNetClient>();
+
+        torBoxClientMock.Setup(m => m.Torrents).Returns(torrentsApiMock.Object);
+        clientMock.Protected().Setup<ITorBoxNetClient>("GetClient", ItExpr.IsAny<String>()).Returns(torBoxClientMock.Object);
+
+        _fileFilterMock.Setup(m => m.IsDownloadable(torrent, It.IsAny<String>(), It.IsAny<Int64>())).Returns(true);
+
+        // Act
+        var result = await clientMock.Object.GetDownloadInfos(torrent);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Single(result);
+        Assert.Equal("https://torbox.app/fakedl/54321/1", result[0].RestrictedLink);
+        torrentsApiMock.Verify(m => m.GetCurrentAsync(It.IsAny<Boolean>(), It.IsAny<CancellationToken>()), Times.Never);
+        torrentsApiMock.Verify(m => m.GetQueuedAsync(It.IsAny<Boolean>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public void GetSymlinkPath_UsesTorBoxAbsolutePathMatchedByFileId()
+    {
+        // Arrange
+        var files = new List<DebridClientFile>
+        {
+            new()
+            {
+                Id = 7,
+                Path = "TorBox Folder/file1.mkv",
+                ShortName = "file1.mkv",
+                AbsolutePath = "/Torrents/TorBox Folder/file1.mkv",
+                Bytes = 1000
+            }
+        };
+
+        var torrent = new Torrent
+        {
+            RdName = "TorBox Folder",
+            RdFiles = JsonConvert.SerializeObject(files)
+        };
+
+        var download = new Download
+        {
+            Path = "https://torbox.app/fakedl/54321/7",
+            Link = "https://example.com/file1.mkv",
+            FileName = "file1.mkv"
+        };
+
+        // Act
+        var result = TorBoxDebridClient.GetSymlinkPath(torrent, download);
+
+        // Assert
+        Assert.Equal("Torrents/TorBox Folder/file1.mkv", result);
     }
 
     [Fact]

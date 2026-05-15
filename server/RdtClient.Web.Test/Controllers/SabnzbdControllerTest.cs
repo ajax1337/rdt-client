@@ -12,6 +12,7 @@ using SignInResult = Microsoft.AspNetCore.Identity.SignInResult;
 
 namespace RdtClient.Web.Test.Controllers;
 
+[Collection("Settings")]
 public class SabnzbdControllerTest
 {
     private readonly Mock<Authentication> _authenticationMock;

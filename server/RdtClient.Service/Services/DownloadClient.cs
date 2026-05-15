@@ -53,6 +53,11 @@ public class DownloadClient(Download download, Torrent torrent, String destinati
                 downloadPath = DebridLinkClient.GetSymlinkPath(torrent, download);
             }
 
+            if (torrent.ClientKind == Provider.TorBox && Type == Data.Enums.DownloadClient.Symlink)
+            {
+                downloadPath = TorBoxDebridClient.GetSymlinkPath(torrent, download);
+            }
+
             if (filePath == null || downloadPath == null)
             {
                 throw new("Invalid download path");

@@ -98,11 +98,7 @@ export class AddNewTorrentComponent implements OnInit {
 
         this.category = settings.find((m) => m.key === 'Gui:Default:Category')?.value as string;
         const categoriesSetting = settings.find((m) => m.key === 'General:Categories')?.value as string;
-        this.categories = (categoriesSetting ?? '')
-          .split(',')
-          .map((c) => c.trim())
-          .filter((c) => c.length > 0)
-          .filter((c, i, arr) => arr.findIndex((a) => a.toLowerCase() === c.toLowerCase()) === i);
+        this.categories = this.parseCategoryNames(categoriesSetting);
 
         // Patched: if no categories are explicitly configured in
         // General:Categories, fall back to the distinct categories already
@@ -171,6 +167,36 @@ export class AddNewTorrentComponent implements OnInit {
 
     const search = this.category.toLowerCase();
     this.filteredCategories = this.categories.filter((value) => value.toLowerCase().includes(search));
+  }
+
+  private parseCategoryNames(raw: string | null | undefined): string[] {
+    if (!raw) {
+      return [];
+    }
+
+    const trimmed = raw.trim();
+    let names: string[] = [];
+    if (trimmed.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          names = parsed
+            .map((c: { name?: unknown }) => (c && typeof c.name === 'string' ? (c.name as string).trim() : ''))
+            .filter((n: string) => n.length > 0);
+        }
+      } catch {
+        // fall through to legacy parse
+      }
+    }
+
+    if (names.length === 0) {
+      names = raw
+        .split(',')
+        .map((c) => c.trim())
+        .filter((c) => c.length > 0);
+    }
+
+    return names.filter((c, i, arr) => arr.findIndex((a) => a.toLowerCase() === c.toLowerCase()) === i);
   }
 
   public selectCategory(cat: string): void {

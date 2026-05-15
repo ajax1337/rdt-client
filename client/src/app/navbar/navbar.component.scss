@@ -1,7 +1,192 @@
-.no-premium {
-  color: red;
+// Dark, sticky top bar matching the Phase-2 dashboard theme. Replaces Bulma's
+// .navbar.is-dark so we get consistent borders, hovers, and the glass effect on
+// scroll. Mobile menu collapses below 768px.
+
+.navbar-shell {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  border-bottom: 1px solid rgba(44, 54, 76, 0.8);
+  background:
+    linear-gradient(180deg, rgba(18, 23, 32, 0.98), rgba(12, 16, 23, 0.94)),
+    rgba(16, 20, 28, 0.94);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03), 0 12px 34px rgba(0, 0, 0, 0.22);
+  backdrop-filter: saturate(150%) blur(12px);
+  -webkit-backdrop-filter: saturate(150%) blur(12px);
+
+  &::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(108, 196, 255, 0.32), rgba(78, 211, 164, 0.2), transparent);
+    pointer-events: none;
+  }
 }
 
-.notification {
-  margin-top: 52px;
+.navbar-inner {
+  max-width: 120rem;
+  margin: 0 auto;
+  min-height: 4rem;
+  padding: 0.6rem 1.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.navbar-brand {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+  margin-right: 0.9rem;
+  padding-right: 1.2rem;
+  border-right: 1px solid rgba(44, 54, 76, 0.9);
+
+  img {
+    height: 2rem;
+    width: auto;
+    display: block;
+    filter: drop-shadow(0 0.35rem 0.9rem rgba(108, 196, 255, 0.08));
+  }
+}
+
+.navbar-burger {
+  display: none;
+  margin-left: auto;
+  width: 2.25rem;
+  height: 2.25rem;
+  border: 1px solid #222a3a;
+  background: transparent;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+
+  span {
+    display: block;
+    width: 1.05rem;
+    height: 1.5px;
+    background: #c9d1de;
+    border-radius: 999px;
+  }
+}
+
+.navbar-links {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex: 1;
+  flex-wrap: wrap;
+}
+
+.nav-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  min-height: 2.25rem;
+  padding: 0.45rem 0.75rem;
+  border-radius: 0.5rem;
+  text-decoration: none;
+  color: #c9d1de;
+  font-size: 0.85rem;
+  font-weight: 500;
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  transition:
+    background 130ms ease,
+    color 130ms ease,
+    border-color 130ms ease,
+    transform 130ms ease;
+
+  i {
+    display: inline-grid;
+    place-items: center;
+    width: 1.25rem;
+    height: 1.25rem;
+    border-radius: 0.35rem;
+    color: #6cc4ff;
+    font-size: 0.76rem;
+  }
+
+  &:hover,
+  &.is-active {
+    background: rgba(108, 196, 255, 0.08);
+    border-color: rgba(108, 196, 255, 0.18);
+    color: #ffffff;
+  }
+  &:hover { transform: translateY(-1px); }
+  &.is-active i { background: rgba(108, 196, 255, 0.12); }
+
+  &--badge {
+    margin-left: 0.35rem;
+    background: rgba(78, 211, 164, 0.1);
+    border-color: rgba(78, 211, 164, 0.28);
+    color: #b6efd5;
+    box-shadow: inset 0 0 0 1px rgba(78, 211, 164, 0.06);
+    i { color: #4ed3a4; }
+    &:hover { background: rgba(78, 211, 164, 0.16); border-color: rgba(78, 211, 164, 0.42); color: #ffffff; }
+  }
+
+  &--account {
+    border-color: #2c364c;
+    background: rgba(255, 255, 255, 0.02);
+    padding-inline: 0.9rem;
+    i { transition: transform 140ms ease; color: #8b94a7; font-size: 0.7rem; }
+    i.is-flipped { transform: rotate(180deg); }
+  }
+}
+
+.navbar-no-premium { color: #ff8a8a; font-weight: 600; }
+
+.navbar-trailing {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  padding-left: 0.75rem;
+}
+
+.account-dropdown { position: relative; }
+// .account-dropdown__menu / __item / __sep live in global styles.scss to keep
+// this file under the 4 KB per-component style budget.
+
+.navbar-update {
+  margin: 0.5rem auto 0;
+  max-width: 96rem;
+  padding: 0.55rem 1rem;
+  border-radius: 0;
+  font-size: 0.85rem;
+
+  &--warn   { background: rgba(246, 196, 83, 0.12); color: #ffd884; border-bottom: 1px solid rgba(246, 196, 83, 0.3); }
+  &--danger { background: rgba(255, 107, 107, 0.12); color: #ffb3b3; border-bottom: 1px solid rgba(255, 107, 107, 0.35); }
+}
+
+@media (max-width: 768px) {
+  // flex-wrap lets .navbar-links (flex-basis: 100%) drop to its own line when the
+  // burger toggle reveals it. Without this, the menu compresses into the same row.
+  .navbar-inner { flex-wrap: wrap; }
+  .navbar-burger { display: inline-flex; }
+
+  .navbar-links {
+    display: none;
+    flex-direction: column;
+    align-items: stretch;
+    flex-basis: 100%;
+    margin-top: 0.5rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid #222a3a;
+    order: 99;
+  }
+  .navbar-links.is-open { display: flex; }
+  .nav-link {
+    justify-content: flex-start;
+    padding: 0.6rem 0.75rem;
+  }
+  .navbar-trailing {
+    margin-left: 0;
+    order: 50;
+  }
 }

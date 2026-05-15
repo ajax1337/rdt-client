@@ -81,9 +81,9 @@ public static class DiConfig
                 .AddHttpMessageHandler<RateLimitHandler>()
                 .AddResilienceHandler("rd_client_handler", ConfigureResiliencePipeline);
 
-        // This likely works for most providers, but should be verified and then the providers changed
-        // to this HTTP client for added resilience.
+        // TorBox returns rate-limit headers on normal polling/listing calls too, not just slow create/link calls.
         services.AddHttpClient(TORBOX_CLIENT)
+                .AddHttpMessageHandler<RateLimitHandler>()
                 .AddResilienceHandler("torbox_client_handler", ConfigureResiliencePipeline);
 
         services.AddHttpClient(TORBOX_CLIENT_SLOW)

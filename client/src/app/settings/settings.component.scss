@@ -1,0 +1,122 @@
+.categories-symlink-warning {
+  margin-bottom: 0.75rem;
+  padding: 0.6rem 0.85rem;
+  border-radius: 6px;
+  border-left: 3px solid #f6c453;
+  background: rgba(246, 196, 83, 0.08);
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.85);
+
+  strong {
+    color: #ffd884;
+  }
+}
+
+.categories-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-bottom: 0.5rem;
+}
+
+.category-card {
+  position: relative;
+  padding: 0.85rem 1rem 0.7rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+  transition:
+    border-color 120ms ease,
+    background 120ms ease;
+
+  &:hover {
+    border-color: rgba(255, 255, 255, 0.16);
+    background: rgba(255, 255, 255, 0.04);
+  }
+
+  &__header {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    margin-bottom: 0.55rem;
+
+    .input {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+  }
+
+  &__remove {
+    flex: 0 0 auto;
+    width: 2rem;
+    height: 2rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 1px solid rgba(255, 107, 107, 0.25);
+    background: transparent;
+    color: #ff8a8a;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 1.05rem;
+    line-height: 1;
+    transition:
+      background 120ms ease,
+      border-color 120ms ease,
+      color 120ms ease;
+
+    &:hover {
+      background: rgba(255, 107, 107, 0.12);
+      border-color: rgba(255, 107, 107, 0.45);
+      color: #ffb3b3;
+    }
+  }
+
+  &__actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.35rem 1.1rem;
+    font-size: 0.85rem;
+  }
+
+  &__actions-label {
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.55);
+    margin-right: 0.25rem;
+  }
+
+  &__toggle {
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    cursor: pointer;
+    user-select: none;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    transition: background 120ms ease;
+
+    input[type='checkbox'] {
+      margin: 0;
+    }
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    &--active {
+      color: #6cc4ff;
+      font-weight: 500;
+    }
+  }
+}
+
+.category-add {
+  align-self: flex-start;
+}

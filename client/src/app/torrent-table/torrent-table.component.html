@@ -1,145 +1,362 @@
-@if (error && error.length > 0) {
-  <div class="notification is-danger is-light">
-    An error has occurred: {{ error }}<br />
-    Please refresh the screen after fixing this error.
-  </div>
-}
-@if (diskSpaceStatus?.isPaused) {
-  <div class="notification is-warning">
-    <strong>Bezzad downloads paused due to low disk space</strong>
-    <br />
-    Available: {{ diskSpaceStatus.availableSpaceGB }} GB | Resume at: {{ diskSpaceStatus.thresholdGB * 2 }} GB
-    <br />
-    <small>Last check: {{ diskSpaceStatus.lastCheckTime | date: "short" }}</small>
-  </div>
-}
-@if (rateLimitStatus?.nextDequeueTime) {
-  <div class="notification is-warning">
-    <strong>Debrid provider rate limit reached</strong>
-    <br />
-    Processing paused until {{ rateLimitStatus.nextDequeueTime | date: "medium" }}
-    @if (rateLimitStatus.secondsRemaining > 0) {
-      ({{ rateLimitStatus.secondsRemaining | number: "1.0-0" }} seconds remaining)
-    }
-  </div>
-}
-<div class="table-container">
-  @if (!isMobile) {
-    <table class="table is-fullwidth is-hoverable">
-      <thead>
-        <tr>
-          <th>
-            <input
-              type="checkbox"
-              (click)="toggleDeleteSelectAll($event)"
-              [checked]="selectedTorrents.length > 0 && selectedTorrents.length === torrents.length"
-            />
-          </th>
-          <th (click)="sort('rdName')">Name</th>
-          <th (click)="sort('category')">Category</th>
-          <th (click)="sort('priority')">Priority</th>
-          <th (click)="sort('rdSeeders')">Seeders</th>
-          <th (click)="sort('files.length')">Files</th>
-          <th (click)="sort('downloads.length')">Downloads</th>
-          <th (click)="sort('rdSize')">Size</th>
-          <th>ETA</th>
-          <th (click)="sort('added')">Requested</th>
-          <th (click)="sort('status')">Status</th>
-        </tr>
-      </thead>
-      <tbody>
-        @for (torrent of sortedTorrents; track torrent.torrentId) {
-          <tr>
-            <td>
-              <input type="checkbox" (click)="toggleSelect(torrent.torrentId)" [checked]="isSelected(torrent.torrentId)" />
-            </td>
-            <td (click)="openTorrent(torrent.torrentId)" class="break-all">
-              {{ torrent.rdName }}
-            </td>
-            <td>
-              {{ torrent.category }}
-            </td>
-            <td>
-              {{ torrent.priority }}
-            </td>
-            <td>
-              {{ torrent.rdSeeders }}
-            </td>
-            <td>
-              {{ (torrent.filesCount ?? torrent.files?.length ?? 0) | number }}
-            </td>
-            <td>
-              {{ (torrent.downloadsCount ?? torrent.downloads?.length ?? 0) | number }}
-            </td>
-            <td>
-              {{ torrent.rdSize | filesize }}
-            </td>
-            <td>
-              {{ torrent | eta }}
-            </td>
-            <td>
-              {{ torrent.added | date: "medium" }}
-            </td>
-            <td>
-              {{ torrent.statusText ?? (torrent | status) }}
-            </td>
-          </tr>
+<div class="space-y-4 pb-32">
+  @if (error && error.length > 0) {
+    <div class="rounded-lg border border-status-error/30 bg-status-error/10 px-4 py-3 text-sm text-status-error">
+      <strong class="font-semibold">An error has occurred:</strong> {{ error }}
+      <div class="text-xs text-status-error/70">Refresh after fixing this error.</div>
+    </div>
+  }
+  @if (diskSpaceStatus?.isPaused) {
+    <div class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+      <strong class="font-semibold">Bezzad downloads paused — low disk space</strong>
+      <div class="mt-0.5 text-xs text-amber-200/80">
+        Available: {{ diskSpaceStatus.availableSpaceGB }} GB · Resume at: {{ diskSpaceStatus.thresholdGB * 2 }} GB · Last check
+        {{ diskSpaceStatus.lastCheckTime | date: "short" }}
+      </div>
+    </div>
+  }
+  @if (rateLimitStatus?.nextDequeueTime) {
+    <div class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+      <strong class="font-semibold">Provider rate limit reached</strong>
+      <div class="mt-0.5 text-xs text-amber-200/80">
+        Processing paused until {{ rateLimitStatus.nextDequeueTime | date: "medium" }}
+        @if (rateLimitStatus.secondsRemaining > 0) {
+          ({{ rateLimitStatus.secondsRemaining | number: "1.0-0" }}s remaining)
         }
-      </tbody>
-    </table>
+      </div>
+    </div>
+  }
+
+  <!-- KPI strip -->
+  <div class="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+    <div class="kpi-card">
+      <div class="kpi-label text-center">Total</div>
+      <div class="kpi-value text-right">{{ kpis.total | number }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label text-center">Active</div>
+      <div class="kpi-value text-right text-status-downloading">{{ kpis.active | number }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label text-center">Queued</div>
+      <div class="kpi-value text-right text-status-queued">{{ kpis.queued | number }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label text-center">Finished</div>
+      <div class="kpi-value text-right text-status-finished">{{ kpis.finished | number }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label text-center">Errors</div>
+      <div class="kpi-value text-right" [ngClass]="kpis.errors > 0 ? 'text-status-error' : 'text-ink-muted'">
+        {{ kpis.errors | number }}
+      </div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label text-center">Aggregate speed</div>
+      <div class="kpi-value text-right">{{ kpis.aggregateSpeed | filesize }}<span class="ml-0.5 text-xs text-ink-muted">/s</span></div>
+    </div>
+  </div>
+
+  <!-- Filter bar -->
+  <div class="flex flex-wrap items-center gap-2.5">
+    <label class="search-field flex-1 min-w-[14rem]">
+      <i class="fas fa-search search-field__icon" aria-hidden="true"></i>
+      <input
+        type="text"
+        class="search-field__input"
+        placeholder="Search torrents by name, category, or hash"
+        [(ngModel)]="searchText"
+        (ngModelChange)="onSearchChange()"
+      />
+      @if (searchText) {
+        <button
+          type="button"
+          class="search-field__clear"
+          (click)="searchText = ''; onSearchChange()"
+          aria-label="Clear search"
+        >
+          ×
+        </button>
+      }
+    </label>
+    <div class="flex flex-wrap gap-1" role="group" aria-label="Filter by status">
+      <button
+        class="status-chip"
+        [class.status-chip-active]="statusFilter === 'all'"
+        [attr.aria-pressed]="statusFilter === 'all'"
+        (click)="setStatusFilter('all')"
+      >
+        All
+      </button>
+      <button
+        class="status-chip"
+        [class.status-chip-active]="statusFilter === 'downloading'"
+        [attr.aria-pressed]="statusFilter === 'downloading'"
+        (click)="setStatusFilter('downloading')"
+      >
+        Downloading
+      </button>
+      <button
+        class="status-chip"
+        [class.status-chip-active]="statusFilter === 'queued'"
+        [attr.aria-pressed]="statusFilter === 'queued'"
+        (click)="setStatusFilter('queued')"
+      >
+        Queued
+      </button>
+      <button
+        class="status-chip"
+        [class.status-chip-active]="statusFilter === 'finished'"
+        [attr.aria-pressed]="statusFilter === 'finished'"
+        (click)="setStatusFilter('finished')"
+      >
+        Finished
+      </button>
+      <button
+        class="status-chip"
+        [class.status-chip-active]="statusFilter === 'error'"
+        [attr.aria-pressed]="statusFilter === 'error'"
+        (click)="setStatusFilter('error')"
+      >
+        Errors
+      </button>
+    </div>
+    @if (availableCategories.length > 0) {
+      <div class="select-field">
+        <select
+          class="select-field__select"
+          [(ngModel)]="categoryFilter"
+          (ngModelChange)="onCategoryFilterChange()"
+        >
+          <option value="">All categories</option>
+          @for (cat of availableCategories; track cat) {
+            <option [value]="cat">{{ cat }}</option>
+          }
+        </select>
+        <i class="fas fa-chevron-down select-field__caret" aria-hidden="true"></i>
+      </div>
+    }
+    @if (searchText || statusFilter !== 'all' || categoryFilter) {
+      <button class="status-chip status-chip--clear" (click)="clearFilters()">
+        Clear filters
+      </button>
+    }
+    <div class="ml-auto text-xs text-ink-muted">
+      Showing {{ visibleTorrents.length | number }} of {{ torrents.length | number }}
+    </div>
+  </div>
+
+  <!-- Desktop table -->
+  @if (!isMobile) {
+    <div class="overflow-x-auto rounded-lg border border-surface-line bg-surface-card shadow-card">
+      <table class="min-w-full table-fixed text-sm">
+        <colgroup>
+          <col class="w-12" />
+          <col />
+          <col class="w-36" />
+          <col class="w-32" />
+          <col class="w-48" />
+          <col class="w-28" />
+          <col class="w-24" />
+          <col class="w-20" />
+          <col class="w-24" />
+          <col class="w-20" />
+          <col class="w-24" />
+          <col class="w-36" />
+        </colgroup>
+        <thead class="sticky top-0 z-10 bg-surface-raised text-xs uppercase tracking-wide text-ink-muted">
+          <tr>
+            <th class="th-select px-3 py-2.5">
+              <input
+                type="checkbox"
+                class="h-3.5 w-3.5 align-middle"
+                (click)="toggleDeleteSelectAll($event)"
+                [checked]="selectedTorrents.length > 0 && selectedTorrents.length === torrents.length"
+              />
+            </th>
+            <th class="th-sortable" style="text-align: left !important" (click)="sort('rdName')">Name {{ sortGlyph('rdName') }}</th>
+            <th class="th-sortable text-center" (click)="sort('status')">Status {{ sortGlyph('status') }}</th>
+            <th class="th-sortable text-center" (click)="sort('category')">Category {{ sortGlyph('category') }}</th>
+            <th class="th-sortable text-center">Progress</th>
+            <th class="th-sortable text-center" (click)="sort('rdSize')">Size {{ sortGlyph('rdSize') }}</th>
+            <th class="th-sortable text-center">Speed</th>
+            <th class="th-sortable text-center">ETA</th>
+            <th class="th-sortable text-center" (click)="sort('rdSeeders')">Seeders {{ sortGlyph('rdSeeders') }}</th>
+            <th class="th-sortable text-center" (click)="sort('files.length')">Files {{ sortGlyph('files.length') }}</th>
+            <th class="th-sortable text-center" (click)="sort('priority')">Priority {{ sortGlyph('priority') }}</th>
+            <th class="th-sortable text-center" (click)="sort('added')">Added {{ sortGlyph('added') }}</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-surface-line">
+          @for (torrent of visibleTorrents; track torrent.torrentId) {
+            <tr
+              class="group transition-colors hover:bg-surface-raised/50"
+              [class.bg-accent/5]="isSelected(torrent.torrentId)"
+            >
+              <td class="px-3 py-2 text-center align-middle">
+                <input
+                  type="checkbox"
+                  class="mx-auto block h-3.5 w-3.5"
+                  (click)="toggleSelect(torrent.torrentId)"
+                  [checked]="isSelected(torrent.torrentId)"
+                />
+              </td>
+              <td class="cell-clickable px-3 py-2 text-left align-middle" (click)="openTorrent(torrent.torrentId)">
+                <div class="flex flex-col items-start justify-center gap-1 text-left">
+                  <span class="badge-type" [ngClass]="typeBadge(torrent).cls">{{ typeBadge(torrent).label }}</span>
+                  <span class="line-clamp-2 break-all text-left text-ink">{{ getDisplayName(torrent) }}</span>
+                </div>
+                @if (torrent.error) {
+                  <div class="mt-1 line-clamp-2 text-left text-xs text-status-error/90" [title]="torrent.error">{{ torrent.error }}</div>
+                }
+                @if (torrent.rdStatusRaw && !torrent.error) {
+                  <div class="mt-0.5 text-left font-mono text-[10px] uppercase text-ink-subtle">{{ torrent.rdStatusRaw }}</div>
+                }
+              </td>
+              <td class="px-3 py-2 text-center align-middle">
+                <span class="status-pill" [ngClass]="'status-pill--' + statusKind(torrent)">
+                  <span class="status-pill__dot"></span>
+                  <span class="status-pill__text">{{ statusLabel(torrent) }}</span>
+                </span>
+              </td>
+              <td class="px-3 py-2 text-center align-middle text-ink-muted">
+                @if (torrent.category) {
+                  <span class="category-chip">{{ torrent.category }}</span>
+                } @else {
+                  <span class="text-ink-subtle">—</span>
+                }
+              </td>
+              <td class="px-3 py-2 text-center align-middle">
+                <div class="flex items-center justify-center gap-2">
+                  <div class="progress-track">
+                    <div
+                      class="progress-fill"
+                      [ngClass]="'progress-fill--' + statusKind(torrent)"
+                      [style.width.%]="progressPercent(torrent)"
+                    ></div>
+                  </div>
+                  <span class="tabular-nums w-9 text-right text-xs text-ink-muted">{{ progressPercent(torrent) | number: '1.0-0' }}%</span>
+                </div>
+              </td>
+              <td class="px-3 py-2 text-center align-middle text-ink-muted tabular-nums">{{ torrent.rdSize | filesize }}</td>
+              <td class="px-3 py-2 text-center align-middle tabular-nums whitespace-nowrap">
+                @if (torrentSpeed(torrent) > 0) {
+                  <span class="text-status-downloading">{{ torrentSpeed(torrent) | filesize }}/s</span>
+                } @else {
+                  <span class="text-ink-subtle">—</span>
+                }
+              </td>
+              <td class="px-3 py-2 text-center align-middle text-ink-muted tabular-nums">{{ torrent | eta }}</td>
+              <td class="px-3 py-2 text-center align-middle text-ink-muted tabular-nums">{{ torrent.rdSeeders ?? 0 | number }}</td>
+              <td class="px-3 py-2 text-center align-middle text-ink-muted tabular-nums">
+                {{ (torrent.filesCount ?? torrent.files?.length ?? 0) | number }}<span class="text-ink-subtle">/{{ (torrent.downloadsCount ?? torrent.downloads?.length ?? 0) | number }}</span>
+              </td>
+              <td class="px-3 py-2 text-center align-middle text-ink-muted tabular-nums">{{ torrent.priority ?? '—' }}</td>
+              <td class="px-3 py-2 text-center align-middle text-ink-muted tabular-nums" [title]="torrent.added | date: 'medium'">
+                {{ torrent.added | date: "MMM d, HH:mm" }}
+              </td>
+            </tr>
+          } @empty {
+            <tr>
+              <td colspan="12" class="px-3 py-12 text-center text-sm text-ink-muted">
+                @if (torrents.length === 0) {
+                  No torrents yet. Add one from the “Add Torrent/NZB” menu.
+                } @else {
+                  No torrents match the current filters.
+                }
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
   } @else {
-    <div class="mobile-cards">
-      @for (torrent of sortedTorrents; track torrent.torrentId) {
-        <div class="box mobile-card" [class.is-selected]="isSelected(torrent.torrentId)">
-          <div class="mobile-card-checkbox">
+    <!-- Mobile cards -->
+    <div class="space-y-2">
+      @for (torrent of visibleTorrents; track torrent.torrentId) {
+        <div
+          class="rounded-lg border border-surface-line bg-surface-card p-3 shadow-card"
+          [class.ring-1]="isSelected(torrent.torrentId)"
+          [class.ring-accent/40]="isSelected(torrent.torrentId)"
+        >
+          <div class="flex items-start gap-3">
             <input
               type="checkbox"
+              class="mt-1 h-4 w-4"
               (click)="toggleSelect(torrent.torrentId)"
               [checked]="isSelected(torrent.torrentId)"
             />
-          </div>
-          <div class="mobile-card-body" (click)="openTorrent(torrent.torrentId)">
-            <p class="mobile-card-name">{{ torrent.rdName }}</p>
-            <div class="tags mb-2">
-              <span class="tag is-info is-light">{{ torrent.statusText ?? (torrent | status) }}</span>
-              @if (torrent.category) {
-                <span class="tag is-light">{{ torrent.category }}</span>
+            <div class="min-w-0 flex-1" (click)="openTorrent(torrent.torrentId)">
+              <div class="flex items-start gap-1.5">
+                <span class="badge-type" [ngClass]="typeBadge(torrent).cls">{{ typeBadge(torrent).label }}</span>
+                <div class="line-clamp-2 break-all text-sm font-medium text-ink">{{ getDisplayName(torrent) }}</div>
+              </div>
+              <div class="mt-1.5 flex flex-wrap items-center gap-1.5">
+                <span class="status-pill" [ngClass]="'status-pill--' + statusKind(torrent)">
+                  <span class="status-pill__dot"></span>
+                  <span class="status-pill__text">{{ statusLabel(torrent) }}</span>
+                </span>
+                @if (torrent.category) {
+                  <span class="category-chip">{{ torrent.category }}</span>
+                }
+              </div>
+              <div class="mt-2 flex items-center gap-2">
+                <div class="progress-track">
+                  <div
+                    class="progress-fill"
+                    [ngClass]="'progress-fill--' + statusKind(torrent)"
+                    [style.width.%]="progressPercent(torrent)"
+                  ></div>
+                </div>
+                <span class="tabular-nums w-10 text-right text-xs text-ink-muted">{{ progressPercent(torrent) | number: '1.0-0' }}%</span>
+              </div>
+              <div class="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-ink-muted">
+                <div><span class="kv-label">Size</span> {{ torrent.rdSize | filesize }}</div>
+                <div>
+                  <span class="kv-label">Speed</span>
+                  @if (torrentSpeed(torrent) > 0) {
+                    {{ torrentSpeed(torrent) | filesize }}/s
+                  } @else { — }
+                </div>
+                <div><span class="kv-label">ETA</span> {{ torrent | eta }}</div>
+                <div><span class="kv-label">Seeders</span> {{ torrent.rdSeeders ?? 0 }}</div>
+                <div><span class="kv-label">Files</span> {{ (torrent.filesCount ?? torrent.files?.length ?? 0) | number }}</div>
+                <div><span class="kv-label">Added</span> {{ torrent.added | date: "MMM d, HH:mm" }}</div>
+              </div>
+              @if (torrent.error) {
+                <div class="mt-1.5 text-xs text-status-error">{{ torrent.error }}</div>
               }
             </div>
-            <div class="mobile-card-details">
-              <span class="mobile-card-detail"
-                ><span class="detail-label">Size</span> {{ torrent.rdSize | filesize }}</span
-              >
-              <span class="mobile-card-detail"><span class="detail-label">Seeders</span> {{ torrent.rdSeeders }}</span>
-              <span class="mobile-card-detail"
-                ><span class="detail-label">Files</span> {{ (torrent.filesCount ?? torrent.files?.length ?? 0) | number }}</span
-              >
-              <span class="mobile-card-detail"
-                ><span class="detail-label">Downloads</span> {{ (torrent.downloadsCount ?? torrent.downloads?.length ?? 0) | number }}</span
-              >
-              <span class="mobile-card-detail"><span class="detail-label">ETA</span> {{ torrent | eta }}</span>
-            </div>
           </div>
+        </div>
+      } @empty {
+        <div class="rounded-lg border border-surface-line bg-surface-card px-3 py-8 text-center text-sm text-ink-muted">
+          @if (torrents.length === 0) {
+            No torrents yet.
+          } @else {
+            No torrents match the current filters.
+          }
         </div>
       }
     </div>
   }
-
-  <div class="flex-container">
-    @if (torrents.length > 0) {
-      <button class="button is-danger" (click)="showDeleteModal()" [disabled]="selectedTorrents.length === 0">
-        Delete Selected
-      </button>
-      <button class="button is-primary" (click)="showRetryModal()" [disabled]="selectedTorrents.length === 0">
-        Retry Selected
-      </button>
-      <button class="button is-primary" (click)="changeSettingsModal()" [disabled]="selectedTorrents.length === 0">
-        Change Settings
-      </button>
-    }
-  </div>
 </div>
 
+<!-- Sticky action toolbar -->
+@if (selectedTorrents.length > 0) {
+  <div class="fixed inset-x-0 bottom-0 z-20 border-t border-surface-line bg-surface-raised/95 backdrop-blur">
+    <div class="mx-auto flex max-w-screen-2xl flex-wrap items-center gap-2 px-4 py-2.5">
+      <span class="rounded-full bg-accent/20 px-2.5 py-1 text-xs font-medium text-accent">
+        {{ selectedTorrents.length | number }} selected
+      </span>
+      <div class="flex-1"></div>
+      <button class="btn-toolbar btn-toolbar--ghost" (click)="changeSettingsModal()">Change settings</button>
+      <button class="btn-toolbar btn-toolbar--ghost" (click)="showRetryModal()">Retry</button>
+      <button class="btn-toolbar btn-toolbar--danger" (click)="showDeleteModal()">Delete</button>
+    </div>
+  </div>
+}
+
+<!-- Modals retain Bulma styling for now (Phase 2 scope is the dashboard itself) -->
 <div class="modal" [class.is-active]="isDeleteModalActive">
   <div class="modal-background"></div>
   <div class="modal-card">
@@ -148,7 +365,7 @@
       <button class="delete" aria-label="close" (click)="deleteCancel()"></button>
     </header>
     <section class="modal-card-body">
-      <p>Are you sure you want to delete these torrent?</p>
+      <p>Are you sure you want to delete these torrents?</p>
       <div class="field">
         <label class="label"></label>
         <div class="control">
@@ -205,7 +422,7 @@
       <button class="delete" aria-label="close" (click)="retryCancel()"></button>
     </header>
     <section class="modal-card-body">
-      <p>Are you sure you want to retry these torrent?</p>
+      <p>Are you sure you want to retry these torrents?</p>
       <p>
         This action will delete all the torrent data + all local downloads. Then it will re-add the original magnet link
         or torrent file to the debrid provider.

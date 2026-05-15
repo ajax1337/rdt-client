@@ -15,35 +15,65 @@ public class TorBoxDebridClient(ILogger<TorBoxDebridClient> logger, IHttpClientF
     : IDebridClient
 {
     private const String TorBoxApiHost = "api.torbox.app";
+    private static readonly JsonSerializerSettings JsonSerializerSettings = new()
+    {
+        NullValueHandling = NullValueHandling.Ignore
+    };
 
     private TimeSpan? _offset;
+
+    // TorBox's AddMagnet / AddFile flow needs the user's preferred seedTorrents setting
+    // from /api/user/me. Calling User.GetAsync on every Add is an extra HTTP round-trip
+    // that runs inside the RealDebridUpdateLock critical section, so it directly extends
+    // the time a row sits in "Not Yet Added to Provider". Cache for 5 min.
+    //
+    // Reference type (not a struct tuple) because the fast path reads without holding the
+    // lock: a class reference is read/written atomically, so consumers see either the old
+    // entry or the new entry — never a torn half-state. The ApiKeyHash is part of the
+    // entry so the cache invalidates implicitly when the user swaps their TorBox account.
+    private sealed class UserSettingsCacheEntry
+    {
+        public required String ApiKeyHash { get; init; }
+        public required DateTimeOffset ExpiresAt { get; init; }
+        public required Int32 SeedTorrents { get; init; }
+    }
+    private static readonly TimeSpan UserSettingsCacheTtl = TimeSpan.FromMinutes(5);
+    private static readonly SemaphoreSlim UserSettingsLock = new(1, 1);
+    private static UserSettingsCacheEntry? _userSettingsCache;
 
     public async Task<IList<DebridClientTorrent>> GetDownloads()
     {
         var results = new List<DebridClientTorrent>();
 
-        var currentTorrents = await GetCurrentTorrents();
+        var currentTorrentsTask = GetCurrentTorrents();
+        var queuedTorrentsTask = GetQueuedTorrents();
+        var currentNzbsTask = GetCurrentUsenet();
+        var queuedNzbsTask = GetQueuedUsenet();
+
+        await Task.WhenAll(currentTorrentsTask, queuedTorrentsTask, currentNzbsTask, queuedNzbsTask);
+
+        var currentTorrents = await currentTorrentsTask;
 
         if (currentTorrents != null)
         {
             results.AddRange(currentTorrents.Select(Map));
         }
 
-        var queuedTorrents = await GetQueuedTorrents();
+        var queuedTorrents = await queuedTorrentsTask;
 
         if (queuedTorrents != null)
         {
             results.AddRange(queuedTorrents.Select(Map));
         }
 
-        var currentNzbs = await GetCurrentUsenet();
+        var currentNzbs = await currentNzbsTask;
 
         if (currentNzbs != null)
         {
             results.AddRange(currentNzbs.Select(Map));
         }
 
-        var queuedNzbs = await GetQueuedUsenet();
+        var queuedNzbs = await queuedNzbsTask;
 
         if (queuedNzbs != null)
         {
@@ -68,8 +98,8 @@ public class TorBoxDebridClient(ILogger<TorBoxDebridClient> logger, IHttpClientF
     {
         return await HandleAddTorrentErrors(async asQueued =>
         {
-            var user = await GetClient().User.GetAsync(true);
-            var result = await GetClient(DiConfig.TORBOX_CLIENT_SLOW).Torrents.AddMagnetAsync(magnetLink, user.Data?.Settings?.SeedTorrents ?? 3, as_queued: asQueued);
+            var seedTorrents = await GetSeedTorrentsSetting();
+            var result = await GetClient(DiConfig.TORBOX_CLIENT_SLOW).Torrents.AddMagnetAsync(magnetLink, seedTorrents, as_queued: asQueued);
 
             return result.Data!.Hash!;
         });
@@ -79,11 +109,73 @@ public class TorBoxDebridClient(ILogger<TorBoxDebridClient> logger, IHttpClientF
     {
         return await HandleAddTorrentErrors(async asQueued =>
         {
-            var user = await GetClient().User.GetAsync(true);
-            var result = await GetClient(DiConfig.TORBOX_CLIENT_SLOW).Torrents.AddFileAsync(bytes, user.Data?.Settings?.SeedTorrents ?? 3, as_queued: asQueued);
+            var seedTorrents = await GetSeedTorrentsSetting();
+            var result = await GetClient(DiConfig.TORBOX_CLIENT_SLOW).Torrents.AddFileAsync(bytes, seedTorrents, as_queued: asQueued);
 
             return result.Data!.Hash!;
         });
+    }
+
+    private async Task<Int32> GetSeedTorrentsSetting()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var apiKeyHash = HashApiKey(Settings.Get.Provider.ApiKey);
+
+        var snapshot = _userSettingsCache;
+        if (snapshot != null && snapshot.ApiKeyHash == apiKeyHash && snapshot.ExpiresAt > now)
+        {
+            return snapshot.SeedTorrents;
+        }
+
+        await UserSettingsLock.WaitAsync();
+        try
+        {
+            snapshot = _userSettingsCache;
+            if (snapshot != null && snapshot.ApiKeyHash == apiKeyHash && snapshot.ExpiresAt > now)
+            {
+                return snapshot.SeedTorrents;
+            }
+
+            try
+            {
+                var user = await GetClient().User.GetAsync(true);
+                var seed = user.Data?.Settings?.SeedTorrents ?? 3;
+                _userSettingsCache = new UserSettingsCacheEntry
+                {
+                    ApiKeyHash = apiKeyHash,
+                    ExpiresAt = now.Add(UserSettingsCacheTtl),
+                    SeedTorrents = seed
+                };
+                return seed;
+            }
+            catch (Exception ex)
+            {
+                // Stale-while-error: if the refresh failed and we have a cached value for
+                // THIS account, serve it rather than failing the Add. A transient TorBox
+                // outage shouldn't error out every in-flight magnet.
+                if (snapshot != null && snapshot.ApiKeyHash == apiKeyHash)
+                {
+                    logger.LogWarning(ex, "TorBox User.GetAsync failed during seedTorrents refresh; serving stale value ({Seed})", snapshot.SeedTorrents);
+                    return snapshot.SeedTorrents;
+                }
+                throw;
+            }
+        }
+        finally
+        {
+            UserSettingsLock.Release();
+        }
+    }
+
+    private static String HashApiKey(String? apiKey)
+    {
+        if (String.IsNullOrEmpty(apiKey))
+        {
+            return "";
+        }
+        var bytes = System.Text.Encoding.UTF8.GetBytes(apiKey);
+        var hash = System.Security.Cryptography.SHA256.HashData(bytes);
+        return Convert.ToHexString(hash);
     }
 
     public async Task<String> AddNzbLink(String nzbLink)
@@ -239,7 +331,7 @@ public class TorBoxDebridClient(ILogger<TorBoxDebridClient> logger, IHttpClientF
 
             if (rdTorrent.Files != null)
             {
-                torrent.RdFiles = JsonConvert.SerializeObject(rdTorrent.Files);
+                torrent.RdFiles = JsonConvert.SerializeObject(rdTorrent.Files, JsonSerializerSettings);
             }
 
             torrent.ClientKind = Provider.TorBox;
@@ -301,9 +393,9 @@ public class TorBoxDebridClient(ILogger<TorBoxDebridClient> logger, IHttpClientF
 
     public async Task<IList<DownloadInfo>?> GetDownloadInfos(Torrent torrent)
     {
-        Int32? id;
+        var id = TryGetProviderDownloadId(torrent);
 
-        if (torrent.Type == DownloadType.Nzb)
+        if (id == null && torrent.Type == DownloadType.Nzb)
         {
             if (torrent.RdId == null)
             {
@@ -314,7 +406,7 @@ public class TorBoxDebridClient(ILogger<TorBoxDebridClient> logger, IHttpClientF
             var usenet = usenets?.FirstOrDefault(m => String.Equals(m.Hash, torrent.RdId, StringComparison.OrdinalIgnoreCase));
             id = (Int32?)usenet?.Id;
         }
-        else
+        else if (id == null)
         {
             // Patched: bypass TorBox.NET's case-sensitive GetHashInfoAsync. Look up by hash directly
             // against /mylist AND /queued with case-insensitive comparison, since Torbox returns
@@ -477,10 +569,17 @@ public class TorBoxDebridClient(ILogger<TorBoxDebridClient> logger, IHttpClientF
             Added = ChangeTimeZone(torrent.CreatedAt)!.Value,
             Files = (torrent.Files ?? []).Select(m => new DebridClientFile
                                          {
-                                             Path = String.Join("/", m.Name.Split('/').Skip(1)),
+                                             Path = NormalizeTorBoxFilePath(m.Name),
                                              Bytes = m.Size,
                                              Id = m.Id,
-                                             Selected = true
+                                             Selected = true,
+                                             ProviderDownloadId = torrent.Id,
+                                             Md5 = m.Md5,
+                                             Hash = m.Hash,
+                                             MimeType = m.MimeType,
+                                             ShortName = m.ShortName,
+                                             AbsolutePath = m.AbsolutePath,
+                                             S3Path = m.S3Path
                                          })
                                          .ToList(),
             Links = [],
@@ -508,10 +607,17 @@ public class TorBoxDebridClient(ILogger<TorBoxDebridClient> logger, IHttpClientF
             Added = ChangeTimeZone(usenet.CreatedAt)!.Value,
             Files = (usenet.Files ?? []).Select(m => new DebridClientFile
                                         {
-                                            Path = String.Join("/", m.Name.Split('/').Skip(1)),
+                                            Path = NormalizeTorBoxFilePath(m.Name),
                                             Bytes = m.Size,
                                             Id = m.Id,
-                                            Selected = true
+                                            Selected = true,
+                                            ProviderDownloadId = usenet.Id,
+                                            Md5 = m.Md5,
+                                            Hash = m.Hash,
+                                            MimeType = m.Mimetype,
+                                            ShortName = m.ShortName,
+                                            AbsolutePath = m.AbsolutePath,
+                                            S3Path = m.S3Path
                                         })
                                         .ToList(),
             Links = [],
@@ -660,6 +766,94 @@ public class TorBoxDebridClient(ILogger<TorBoxDebridClient> logger, IHttpClientF
                 Directory.Delete(hashDir, true);
             }
         }
+    }
+
+    public static String? GetSymlinkPath(Torrent torrent, Download download)
+    {
+        var file = GetFileFromDownload(torrent, download);
+
+        if (file == null)
+        {
+            return DownloadHelper.GetDownloadPath(torrent, download);
+        }
+
+        var providerPath = FirstNonEmpty(file.AbsolutePath, file.Path, file.ShortName, DownloadHelper.GetFileName(download));
+
+        return NormalizeProviderPath(providerPath);
+    }
+
+    private static Int32? TryGetProviderDownloadId(Torrent torrent)
+    {
+        var providerDownloadId = torrent.Files.Select(file => file.ProviderDownloadId).FirstOrDefault(id => id.HasValue);
+
+        if (!providerDownloadId.HasValue ||
+            providerDownloadId.Value < Int32.MinValue ||
+            providerDownloadId.Value > Int32.MaxValue)
+        {
+            return null;
+        }
+
+        return (Int32)providerDownloadId.Value;
+    }
+
+    private static DebridClientFile? GetFileFromDownload(Torrent torrent, Download download)
+    {
+        var parsedFileId = TryGetFileId(download.Path);
+
+        if (parsedFileId != null)
+        {
+            var match = torrent.Files.FirstOrDefault(file => file.Id == parsedFileId.Value);
+
+            if (match != null)
+            {
+                return match;
+            }
+        }
+
+        var fileName = DownloadHelper.GetFileName(download);
+
+        if (String.IsNullOrWhiteSpace(fileName))
+        {
+            return null;
+        }
+
+        return torrent.Files.FirstOrDefault(file => EndsWithFileName(file.AbsolutePath, fileName)) ??
+               torrent.Files.FirstOrDefault(file => EndsWithFileName(file.Path, fileName)) ??
+               torrent.Files.FirstOrDefault(file => file.ShortName?.Equals(fileName, StringComparison.OrdinalIgnoreCase) == true);
+    }
+
+    private static Int64? TryGetFileId(String link)
+    {
+        var segments = link.Split('/', StringSplitOptions.RemoveEmptyEntries);
+
+        if (segments is not [_, _, "fakedl", _, var fileIdStr] || fileIdStr.Equals("zip", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return Int64.TryParse(fileIdStr, out var fileId) ? fileId : null;
+    }
+
+    private static Boolean EndsWithFileName(String? path, String fileName)
+    {
+        return !String.IsNullOrWhiteSpace(path) && path.EndsWith(fileName, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static String? FirstNonEmpty(params String?[] values)
+    {
+        return values.FirstOrDefault(value => !String.IsNullOrWhiteSpace(value));
+    }
+
+    private static String? NormalizeProviderPath(String? path)
+    {
+        return String.IsNullOrWhiteSpace(path) ? null : path.TrimStart('/', '\\');
+    }
+
+    private static String NormalizeTorBoxFilePath(String path)
+    {
+        var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+
+        return parts.Length > 1 ? String.Join("/", parts.Skip(1)) : path;
     }
 
     private TorrentStatus LogUnmappedStatus(String? status, Torrent torrent)
