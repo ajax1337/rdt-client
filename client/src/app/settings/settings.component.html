@@ -1,290 +1,317 @@
-<div class="tabs">
-  <ul>
+<div class="settings-page">
+  <div class="add-tabs" role="tablist">
     @for (tab of tabs; track tab.key; let i = $index) {
-      <li [ngClass]="{ 'is-active': activeTab === i }" (click)="activeTab = i">
-        <a>{{ tab.displayName }}</a>
-      </li>
+      <button
+        type="button"
+        class="add-tabs__tab"
+        role="tab"
+        [class.add-tabs__tab--active]="activeTab === i"
+        [attr.aria-selected]="activeTab === i"
+        (click)="activeTab = i"
+      >
+        <span>{{ tab.displayName }}</span>
+      </button>
     }
-    <li [ngClass]="{ 'is-active': activeTab === 99 }" (click)="activeTab = 99">
-      <a>Speed Tests</a>
-    </li>
-  </ul>
-</div>
+    <button
+      type="button"
+      class="add-tabs__tab"
+      role="tab"
+      [class.add-tabs__tab--active]="activeTab === 99"
+      [attr.aria-selected]="activeTab === 99"
+      (click)="activeTab = 99"
+    >
+      <i class="fas fa-gauge-high" aria-hidden="true"></i>
+      <span>Speed Tests</span>
+    </button>
+  </div>
 
-@for (tab of tabs; track tab.key; let i = $index) {
-  <div [hidden]="activeTab !== i">
-    <h3>{{ tab.description }}</h3>
-    @for (setting of tab.settings; track setting.key) {
-      @if (setting.type === "Object") {
-        <h3 class="title is-3" style="margin-top: 1.2rem">{{ setting.displayName }}</h3>
+  @for (tab of tabs; track tab.key; let i = $index) {
+    @if (activeTab === i) {
+    <div class="settings-tab">
+      @if (tab.description) {
+        <p class="settings-tab__intro">{{ tab.description }}</p>
       }
-      <div class="field">
-        @if (setting.key === "General:Categories") {
-          <label class="label">{{ setting.displayName }}</label>
-          @if (isSymlinkMode) {
-            <div class="categories-symlink-warning" role="note">
-              <strong>Symlink mode is active.</strong>
-              Removing a torrent from the debrid provider would break the symlink target, so the
-              <em>Provider</em> toggle is automatically suppressed for completed torrents while you
-              run Symlink Downloader. The Dashboard and Local-files toggles still apply.
-            </div>
-          }
-          <div class="categories-editor">
-            @for (row of categoryRows; track $index; let i = $index) {
-              <div class="category-card">
-                <div class="category-card__header">
-                  <input
-                    class="input"
-                    type="text"
-                    [(ngModel)]="row.name"
-                    (ngModelChange)="syncCategories()"
-                    placeholder="Category name"
-                  />
-                  <button
-                    type="button"
-                    class="category-card__remove"
-                    (click)="removeCategoryRow(i)"
-                    [attr.aria-label]="'Remove category ' + (row.name || 'unnamed')"
-                    title="Remove this category"
-                  >
-                    ×
+
+      <div class="add-card settings-section">
+        @for (setting of tab.settings; track setting.key) {
+          @if (setting.type === "Object") {
+            <div class="settings-section__heading">{{ setting.displayName }}</div>
+          } @else {
+            <div class="settings-field">
+              @if (setting.key === "General:Categories") {
+                <label class="add-label">{{ setting.displayName }}</label>
+                @if (isSymlinkMode) {
+                  <div class="categories-symlink-warning" role="note">
+                    <strong>Symlink mode is active.</strong>
+                    Removing a torrent from the debrid provider would break the symlink target, so the
+                    <em>Provider</em> toggle is automatically suppressed while you run Symlink Downloader.
+                    Dashboard and Local-files still apply.
+                  </div>
+                }
+                <div class="categories-editor">
+                  @for (row of categoryRows; track $index; let i = $index) {
+                    <div class="category-card">
+                      <div class="category-card__header">
+                        <input
+                          class="add-input"
+                          type="text"
+                          [(ngModel)]="row.name"
+                          (ngModelChange)="syncCategories()"
+                          placeholder="Category name"
+                        />
+                        <button
+                          type="button"
+                          class="category-card__remove"
+                          (click)="removeCategoryRow(i)"
+                          [attr.aria-label]="'Remove category ' + (row.name || 'unnamed')"
+                          title="Remove this category"
+                        >
+                          <i class="fas fa-trash" aria-hidden="true"></i>
+                        </button>
+                      </div>
+                      <div class="category-card__actions">
+                        <span class="category-card__actions-label">Auto-remove on finish</span>
+                        <label
+                          class="category-card__toggle"
+                          [class.category-card__toggle--active]="row.removeFromDashboard"
+                        >
+                          <input
+                            type="checkbox"
+                            [(ngModel)]="row.removeFromDashboard"
+                            (ngModelChange)="syncCategories()"
+                          />
+                          Dashboard
+                        </label>
+                        <label
+                          class="category-card__toggle"
+                          [class.category-card__toggle--active]="row.removeFromProvider"
+                        >
+                          <input
+                            type="checkbox"
+                            [(ngModel)]="row.removeFromProvider"
+                            (ngModelChange)="syncCategories()"
+                          />
+                          Provider
+                        </label>
+                        <label
+                          class="category-card__toggle"
+                          [class.category-card__toggle--active]="row.removeLocalFiles"
+                        >
+                          <input
+                            type="checkbox"
+                            [(ngModel)]="row.removeLocalFiles"
+                            (ngModelChange)="syncCategories()"
+                          />
+                          Local files
+                        </label>
+                      </div>
+                    </div>
+                  }
+                  <button type="button" class="add-btn-ghost" (click)="addCategoryRow()">
+                    <i class="fas fa-plus" aria-hidden="true"></i>
+                    <span>Add category</span>
                   </button>
                 </div>
-                <div class="category-card__actions">
-                  <span class="category-card__actions-label">Auto-remove on finish</span>
-                  <label class="category-card__toggle" [class.category-card__toggle--active]="row.removeFromDashboard">
-                    <input
-                      type="checkbox"
-                      [(ngModel)]="row.removeFromDashboard"
-                      (ngModelChange)="syncCategories()"
-                    />
-                    Dashboard
-                  </label>
-                  <label class="category-card__toggle" [class.category-card__toggle--active]="row.removeFromProvider">
-                    <input
-                      type="checkbox"
-                      [(ngModel)]="row.removeFromProvider"
-                      (ngModelChange)="syncCategories()"
-                    />
-                    Provider
-                  </label>
-                  <label class="category-card__toggle" [class.category-card__toggle--active]="row.removeLocalFiles">
-                    <input
-                      type="checkbox"
-                      [(ngModel)]="row.removeLocalFiles"
-                      (ngModelChange)="syncCategories()"
-                    />
-                    Local files
-                  </label>
-                </div>
-              </div>
-            }
+                <p class="add-help" [innerHtml]="setting.description | nl2br"></p>
+              } @else {
+                @switch (setting.type) {
+                  @case ("String") {
+                    <label class="add-label">{{ setting.displayName }}</label>
+                    <input class="add-input" type="text" [(ngModel)]="setting.value" />
+                    <p class="add-help" [innerHtml]="setting.description | nl2br"></p>
+                  }
+                  @case ("Int32") {
+                    <label class="add-label">{{ setting.displayName }}</label>
+                    <input class="add-input" type="number" [(ngModel)]="setting.value" />
+                    <p class="add-help" [innerHtml]="setting.description | nl2br"></p>
+                  }
+                  @case ("Boolean") {
+                    <label class="add-check">
+                      <input type="checkbox" [(ngModel)]="setting.value" />
+                      <span>{{ setting.displayName }}</span>
+                    </label>
+                    <p class="add-help" [innerHtml]="setting.description | nl2br"></p>
+                  }
+                  @case ("Enum") {
+                    <label class="add-label">{{ setting.displayName }}</label>
+                    <div class="add-select-wrap">
+                      <select class="add-select" [(ngModel)]="setting.value">
+                        @for (kvp of setting.enumValues | keyvalue; track kvp) {
+                          <option [value]="kvp.key">{{ kvp.value }}</option>
+                        }
+                      </select>
+                      <i class="fas fa-chevron-down add-select-wrap__caret" aria-hidden="true"></i>
+                    </div>
+                    <p class="add-help" [innerHtml]="setting.description | nl2br"></p>
+                  }
+                  @default {
+                    <div class="add-error">
+                      <i class="fas fa-exclamation-circle" aria-hidden="true"></i>
+                      <span>Invalid setting type {{ setting.type }}</span>
+                    </div>
+                  }
+                }
+              }
+
+              @if (setting.key === "DownloadClient:Aria2cSecret") {
+                <button
+                  class="add-btn-ghost"
+                  (click)="testAria2cConnection()"
+                  [disabled]="saving"
+                  [ngClass]="{ 'is-loading': saving }"
+                >
+                  <i class="fas fa-bolt" aria-hidden="true"></i>
+                  <span>Test aria2 connection</span>
+                </button>
+                @if (testAria2cConnectionError) {
+                  <div class="add-error">
+                    <i class="fas fa-exclamation-circle" aria-hidden="true"></i>
+                    <span>Could not connect to Aria2. {{ testAria2cConnectionError }}</span>
+                  </div>
+                }
+                @if (testAria2cConnectionSuccess) {
+                  <div class="add-success">
+                    <i class="fas fa-check-circle" aria-hidden="true"></i>
+                    <span>Found Aria2 client version {{ testAria2cConnectionSuccess }}</span>
+                  </div>
+                }
+              }
+            </div>
+          }
+        }
+      </div>
+
+      @if (i === 0) {
+        <div class="add-card settings-section">
+          <div class="settings-section__heading">Browser integration</div>
+          <div class="settings-field">
+            <label class="add-label">Magnet link handler</label>
+            <p class="add-help">
+              @if (canRegisterMagnetHandler) {
+                Register this client as your browser's default handler for <code>magnet:</code> links. Magnets you open
+                anywhere on the web will jump straight to the Add Torrent screen.
+              } @else {
+                Your
+                <a href="https://caniuse.com/mdn-api_navigator_registerprotocolhandler" target="_blank" rel="noopener noreferrer">
+                  browser may not support this feature
+                </a>, or the client is not being served in a
+                <a href="https://developer.mozilla.org/en-US/docs/Glossary/Secure_Context/" target="_blank" rel="noopener noreferrer">
+                  secure context
+                </a>.
+              }
+            </p>
             <button
               type="button"
-              class="button is-small is-info is-light category-add"
-              (click)="addCategoryRow()"
+              class="add-btn-ghost"
+              (click)="registerMagnetHandler()"
+              [disabled]="!canRegisterMagnetHandler"
             >
-              + Add category
+              <i class="fas fa-magnet" aria-hidden="true"></i>
+              <span>{{ canRegisterMagnetHandler ? "Register handler" : "Unavailable in this browser" }}</span>
             </button>
           </div>
-          <p class="help" [innerHtml]="setting.description | nl2br"></p>
-        } @else {
-          @if (setting.type !== "Boolean" && setting.type !== "Object") {
-            <label class="label">{{ setting.displayName }}</label>
-          }
-          @switch (setting.type) {
-            @case ("String") {
-              <div class="control">
-                <input class="input" type="text" [(ngModel)]="setting.value" />
-              </div>
-            }
-            @case ("Int32") {
-              <div class="control">
-                <input class="input" type="number" [(ngModel)]="setting.value" />
-              </div>
-            }
-            @case ("Boolean") {
-              <label class="checkbox">
-                <input type="checkbox" [(ngModel)]="setting.value" />
-                {{ setting.displayName }}
-              </label>
-            }
-            @case ("Enum") {
-              <div class="control select is-fullwidth">
-                <select [(ngModel)]="setting.value">
-                  @for (kvp of setting.enumValues | keyvalue; track kvp) {
-                    <option [value]="kvp.key">{{ kvp.value }}</option>
-                  }
-                </select>
-              </div>
-            }
-            @case ("Object") {}
-            @default {
-              <div class="control">Invalid setting type {{ setting.type }}</div>
-            }
-          }
-          <p class="help" [innerHtml]="setting.description | nl2br"></p>
-        }
-        @if (setting.key === "DownloadClient:Aria2cSecret") {
-          <button
-            class="button is-warning"
-            (click)="testAria2cConnection()"
-            [disabled]="saving"
-            [ngClass]="{ 'is-loading': saving }"
-          >
-            Test aria2 connection
-          </button>
-          @if (testAria2cConnectionError) {
-            <div class="notification is-danger is-light" style="margin-top: 1rem">
-              Could connect to Aria2 client<br />
-              {{ testAria2cConnectionError }}
-            </div>
-          }
-          @if (testAria2cConnectionSuccess) {
-            <div class="notification is-success is-light" style="margin-top: 1rem">
-              Found Aria2 client version {{ testAria2cConnectionSuccess }}
-            </div>
-          }
-        }
-      </div>
-    }
-  </div>
-}
-
-@if (activeTab === 99) {
-  <div>
-    <div class="field">
-      <label class="label">Test download path permissions</label>
-      <div class="control">
-        @if (!testPathError && !testPathSuccess) {
-          <button
-            class="button is-warning"
-            (click)="testDownloadPath()"
-            [disabled]="saving"
-            [ngClass]="{ 'is-loading': saving }"
-          >
-            Test permissions
-          </button>
-        }
-        @if (testPathError) {
-          <div class="notification is-danger is-light">
-            Could not test your download path<br />
-            {{ testPathError }}
-          </div>
-        }
-        @if (testPathSuccess) {
-          <div class="notification is-success is-light">Your download path looks good!</div>
-        }
-      </div>
-      <div class="help">This will check if the download folder has write permissions.</div>
-    </div>
-    <div class="field">
-      <label class="label">Test Real-Debrid download speed</label>
-      <div class="control">
-        @if (testDownloadSpeedError) {
-          <div class="notification is-danger is-light">
-            Could not test your download speed<br />
-            {{ testDownloadSpeedError }}
-          </div>
-        } @else if (testDownloadSpeedSuccess) {
-          <div class="notification is-success is-light">Download speed {{ testDownloadSpeedSuccess | filesize }}/s</div>
-        } @else {
-          <button
-            class="button is-warning"
-            (click)="testDownloadSpeed()"
-            [disabled]="saving"
-            [ngClass]="{ 'is-loading': saving }"
-          >
-            Test download speed
-          </button>
-        }
-      </div>
-      <div class="help">
-        This will attempt to download a 10GB file from Real-Debrid. When 50MB has been downloaded the test will stop.
-      </div>
-    </div>
-    <div class="field">
-      <label class="label">Test download folder write speed</label>
-      <div class="control">
-        @if (testWriteSpeedError) {
-          <div class="notification is-danger is-light">
-            Could not test your download speed<br />
-            {{ testWriteSpeedError }}
-          </div>
-        } @else if (testWriteSpeedSuccess) {
-          <div class="notification is-success is-light">Write speed {{ testWriteSpeedSuccess | filesize }}/s</div>
-        } @else {
-          <button
-            class="button is-warning"
-            (click)="testWriteSpeed()"
-            [disabled]="saving"
-            [ngClass]="{ 'is-loading': saving }"
-          >
-            Test write speed
-          </button>
-        }
-      </div>
-      <div class="help">This will write a small file to your download folder to see how fast it can write to it.</div>
-    </div>
-  </div>
-}
-
-<div class="field">
-  <div class="control">
-    @if (error?.length > 0) {
-      <div class="notification is-danger is-light">Error saving settings: {{ error }}</div>
-    }
-  </div>
-</div>
-
-@if (activeTab === 0) {
-  <div class="field">
-    <label class="label">Register client as magnet link handler</label>
-    <div class="control">
-      <button
-        class="button is-info"
-        type="button"
-        (click)="registerMagnetHandler()"
-        [disabled]="!canRegisterMagnetHandler"
-      >
-        <span>
-          {{ canRegisterMagnetHandler ? "Register Handler" : "Unavailable in This Browser" }}
-        </span>
-      </button>
-    </div>
-    <p class="help">
-      @if (canRegisterMagnetHandler) {
-        This will attempt to register the client as your browser's default handler for magnet links and automatically
-        open them in the new torrent screen for downloading.
-      } @else {
-        Magnet link registration is unavailable. Your
-        <a
-          href="https://caniuse.com/mdn-api_navigator_registerprotocolhandler"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          browser may not support this feature
-        </a>
-        , or the client is not being served in a
-        <a
-          href="https://developer.mozilla.org/en-US/docs/Glossary/Secure_Context/"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          secure context
-        </a>
-        .
+        </div>
       }
-    </p>
-  </div>
-}
+    </div>
+    }
+  }
 
-@if (activeTab < 99) {
-  <div class="field">
-    <div class="control">
-      <button class="button is-success" (click)="ok()" [disabled]="saving" [ngClass]="{ 'is-loading': saving }">
-        Save Settings
+  @if (activeTab === 99) {
+    <div class="settings-tab">
+      <p class="settings-tab__intro">
+        Quick checks to verify your download path is writable, your provider link is fast, and your disk can keep up.
+      </p>
+
+      <div class="add-card settings-section">
+        <div class="settings-field">
+          <label class="add-label">Download path permissions</label>
+          <p class="add-help">Verifies the download folder is writable from inside the container.</p>
+          @if (testPathError) {
+            <div class="add-error">
+              <i class="fas fa-exclamation-circle" aria-hidden="true"></i>
+              <span>{{ testPathError }}</span>
+            </div>
+          } @else if (testPathSuccess) {
+            <div class="add-success">
+              <i class="fas fa-check-circle" aria-hidden="true"></i>
+              <span>Your download path looks good.</span>
+            </div>
+          } @else {
+            <button class="add-btn-ghost" (click)="testDownloadPath()" [disabled]="saving" [ngClass]="{ 'is-loading': saving }">
+              <i class="fas fa-folder-tree" aria-hidden="true"></i>
+              <span>Test permissions</span>
+            </button>
+          }
+        </div>
+
+        <div class="settings-field">
+          <label class="add-label">Provider download speed</label>
+          <p class="add-help">
+            Pulls up to 50&nbsp;MB of RealDebrid's 10&nbsp;GB public speed-test file
+            (<code>20.download.real-debrid.com</code>) to measure host throughput from a debrid CDN. Override with the
+            <code>RDTCLIENT_SPEEDTEST_URL</code> env variable to use a different mirror.
+          </p>
+          @if (testDownloadSpeedError) {
+            <div class="add-error">
+              <i class="fas fa-exclamation-circle" aria-hidden="true"></i>
+              <span>{{ testDownloadSpeedError }}</span>
+            </div>
+          } @else if (testDownloadSpeedSuccess) {
+            <div class="add-success">
+              <i class="fas fa-check-circle" aria-hidden="true"></i>
+              <span>{{ testDownloadSpeedSuccess | filesize }}/s</span>
+            </div>
+          } @else {
+            <button class="add-btn-ghost" (click)="testDownloadSpeed()" [disabled]="saving" [ngClass]="{ 'is-loading': saving }">
+              <i class="fas fa-gauge-high" aria-hidden="true"></i>
+              <span>Test download speed</span>
+            </button>
+          }
+        </div>
+
+        <div class="settings-field">
+          <label class="add-label">Local disk write speed</label>
+          <p class="add-help">Writes a small file to your download folder to gauge disk write throughput.</p>
+          @if (testWriteSpeedError) {
+            <div class="add-error">
+              <i class="fas fa-exclamation-circle" aria-hidden="true"></i>
+              <span>{{ testWriteSpeedError }}</span>
+            </div>
+          } @else if (testWriteSpeedSuccess) {
+            <div class="add-success">
+              <i class="fas fa-check-circle" aria-hidden="true"></i>
+              <span>{{ testWriteSpeedSuccess | filesize }}/s</span>
+            </div>
+          } @else {
+            <button class="add-btn-ghost" (click)="testWriteSpeed()" [disabled]="saving" [ngClass]="{ 'is-loading': saving }">
+              <i class="fas fa-hard-drive" aria-hidden="true"></i>
+              <span>Test write speed</span>
+            </button>
+          }
+        </div>
+      </div>
+    </div>
+  }
+
+  @if (error?.length > 0) {
+    <div class="add-error">
+      <i class="fas fa-exclamation-circle" aria-hidden="true"></i>
+      <span>Could not save settings: {{ error }}</span>
+    </div>
+  }
+
+  @if (activeTab < 99) {
+    <div class="add-submit-row">
+      <button
+        type="button"
+        class="add-submit"
+        (click)="ok()"
+        [disabled]="saving"
+        [ngClass]="{ 'is-loading': saving }"
+      >
+        <i class="fas fa-save" aria-hidden="true"></i>
+        <span>Save settings</span>
       </button>
     </div>
-  </div>
-}
+  }
+</div>

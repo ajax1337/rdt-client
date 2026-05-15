@@ -1,301 +1,340 @@
-<div class="field">
-  <div class="tabs is-toggle is-fullwidth">
-    <ul>
-      <li [class.is-active]="type === 'torrent'">
-        <a (click)="changeType('torrent')">
-          <span class="icon is-small"><i class="fas fa-magnet" aria-hidden="true"></i></span>
-          <span>Torrent</span>
-        </a>
-      </li>
-      <li [class.is-active]="type === 'nzb'">
-        <a (click)="changeType('nzb')">
-          <span class="icon is-small"><i class="fas fa-file-archive" aria-hidden="true"></i></span>
-          <span>NZB</span>
-        </a>
-      </li>
-    </ul>
-  </div>
-</div>
-
-<div class="field">
-  <div [hidden]="type !== 'torrent'">
-    <div class="field">
-      <label class="label">Torrent file</label>
-      <div class="file has-name">
-        <label class="file-label">
-          <input class="file-input" type="file" name="resume" (change)="pickFile($event)" [disabled]="saving" />
-          <span class="file-cta">
-            <span class="file-icon">
-              <i class="fas fa-upload"></i>
-            </span>
-            <span class="file-label"> Pick a torrent file... </span>
-          </span>
-          <span class="file-name">
-            {{ fileName }}
-          </span>
-        </label>
-      </div>
-    </div>
-
-    <div class="field">
-      <label class="label">Magnet Link</label>
-      <div class="control">
-        <textarea
-          class="textarea"
-          placeholder="Paste your magnet link here"
-          [(ngModel)]="magnetLink"
-          [disabled]="saving"
-          (blur)="checkFiles()"
-          (paste)="onPaste()"
-        ></textarea>
-      </div>
-    </div>
+<div class="add-form">
+  <div class="add-tabs" role="tablist">
+    <button
+      type="button"
+      class="add-tabs__tab"
+      role="tab"
+      [class.add-tabs__tab--active]="type === 'torrent'"
+      [attr.aria-selected]="type === 'torrent'"
+      (click)="changeType('torrent')"
+    >
+      <i class="fas fa-magnet" aria-hidden="true"></i>
+      <span>Torrent</span>
+    </button>
+    <button
+      type="button"
+      class="add-tabs__tab"
+      role="tab"
+      [class.add-tabs__tab--active]="type === 'nzb'"
+      [attr.aria-selected]="type === 'nzb'"
+      (click)="changeType('nzb')"
+    >
+      <i class="fas fa-file-archive" aria-hidden="true"></i>
+      <span>NZB</span>
+    </button>
   </div>
 
-  <div [hidden]="type !== 'nzb'">
-    <div class="field">
-      <label class="label">NZB file</label>
-      <div class="file has-name">
-        <label class="file-label">
-          <input class="file-input" type="file" name="resume" (change)="pickFile($event)" [disabled]="saving" />
-          <span class="file-cta">
-            <span class="file-icon">
-              <i class="fas fa-upload"></i>
-            </span>
-            <span class="file-label"> Pick an NZB file... </span>
-          </span>
-          <span class="file-name">
-            {{ fileName }}
-          </span>
-        </label>
-      </div>
-    </div>
+  <section class="add-card" aria-label="Source">
+    @if (type === "torrent") {
+      <label class="add-label" for="magnet-link">Magnet link</label>
+      <textarea
+        id="magnet-link"
+        class="add-textarea"
+        rows="3"
+        placeholder="magnet:?xt=urn:btih:…"
+        [(ngModel)]="magnetLink"
+        [disabled]="saving"
+        (blur)="checkFiles()"
+        (paste)="onPaste()"
+      ></textarea>
 
-    <div class="field">
-      <label class="label">NZB Link</label>
-      <div class="control">
-        <textarea
-          class="textarea"
-          placeholder="Paste your NZB link here"
-          [(ngModel)]="nzbLink"
-          [disabled]="saving"
-        ></textarea>
-      </div>
-    </div>
-  </div>
+      <div class="add-divider"><span>or</span></div>
 
-  <div class="field" style="margin-top: 10px">
-    <div class="control">
-      <button class="button is-success" [disabled]="saving" [ngClass]="{ 'is-loading': saving }" (click)="ok()">
-        @if (type === "torrent") {
-          <span>Add Torrent</span>
-        } @else {
-          <span>Add NZB</span>
-        }
-      </button>
-    </div>
-  </div>
-
-  <div>
-    <div class="separator">Advanced settings</div>
-
-    <div class="field">
-      <label class="label">Downloader</label>
-      <div class="control select is-fullwidth">
-        <select [(ngModel)]="downloadClient" (ngModelChange)="setFinishAction()">
-          <option [ngValue]="0">Bezzad</option>
-          <option [ngValue]="1">Aria2c</option>
-          <option [ngValue]="2">Symlink Downloader</option>
-          <option [ngValue]="3">Synology DownloadStation</option>
-        </select>
-      </div>
-      <p class="help">Select which downloader is used to download this from the debrid provider to your host.</p>
-    </div>
-
-    <div class="field">
-      <label class="label">Post Download Action</label>
-      <div class="control select is-fullwidth">
-        <select [(ngModel)]="hostDownloadAction">
-          <option [ngValue]="0">Download all files to host</option>
-          <option [ngValue]="1">Don't download any files to host</option>
-        </select>
-      </div>
-      <p class="help">
-        When a download is finished on the provider, perform this action. Use this setting if you only want to add files
-        to your debrid provider but not download them to the host.
-      </p>
-    </div>
-
-    <div class="field">
-      <label class="label">Minimum file size to download</label>
-      <div class="control">
-        <div class="field has-addons" style="margin-bottom: 0">
-          <div class="control is-expanded">
-            <input class="input" type="number" max="1000" min="0" step="1" [(ngModel)]="downloadMinSize" />
-          </div>
-          <div class="control">
-            <a class="button is-static">MB</a>
-          </div>
-        </div>
-      </div>
-      @if (provider === "AllDebrid") {
-        <p class="help">
-          When downloading with AllDebrid it cannot be guaranteed that only files above this limit will be download as
-          some files are grouped together in 1 large archive.
-        </p>
-      }
-      @if (downloadAction === 2) {
-        <p class="help">This setting does not apply to manually selected files.</p>
-      }
-    </div>
-
-    <div class="field">
-      <label class="label">Include files</label>
-      <div class="control">
-        <div class="field" style="margin-bottom: 0">
-          <div class="control is-expanded">
-            <input class="input" type="text" [(ngModel)]="includeRegex" (blur)="verifyRegex()" />
-          </div>
-        </div>
-      </div>
-      <p class="help">
-        Select only the files that are matching this regular expression. Only use this setting OR the Exclude files
-        setting, not both.
-      </p>
-      @if (downloadAction === 2) {
-        <p class="help">This setting does not apply to manually selected files.</p>
-      }
-      @if (includeRegexError) {
-        <p class="help is-danger">{{ includeRegexError }}</p>
-      }
-    </div>
-
-    <div class="field">
-      <label class="label">Exclude files</label>
-      <div class="control">
-        <div class="field" style="margin-bottom: 0">
-          <div class="control is-expanded">
-            <input class="input" type="text" [(ngModel)]="excludeRegex" (blur)="verifyRegex()" />
-          </div>
-        </div>
-      </div>
-      <p class="help">
-        Ignore files that are matching this regular expression. Only use this setting OR the Include files setting, not
-        both.
-      </p>
-      @if (downloadAction === 2) {
-        <p class="help">This setting does not apply to manually selected files.</p>
-      }
-      @if (excludeRegexError) {
-        <p class="help is-danger">{{ excludeRegexError }}</p>
-      }
-    </div>
-
-    <div class="field">
-      <label class="label">Finished action</label>
-      <div class="control select is-fullwidth">
-        <select [(ngModel)]="finishedAction">
-          <option [ngValue]="0">Do nothing</option>
-          @if (downloadClient !== 2) {
-            <option [ngValue]="1">Remove from provider and client</option>
-            <option [ngValue]="2">Remove from provider</option>
-          }
-          <option [ngValue]="3">Remove from client</option>
-        </select>
-      </div>
-    </div>
-
-    <div class="field">
-      <label class="label">Finished Action Delay (minutes)</label>
-      <div class="control is-fullwidth">
-        <input class="input" type="number" [(ngModel)]="finishedActionDelay" />
-      </div>
-      <p class="help">
-        When a download is finished on the provider, perform this action. Use this setting if you only want to add files
-        to your debrid provider but not download them to the host.
-      </p>
-    </div>
-
-    <div class="field">
-      <label class="label">Category</label>
-      <div class="control category-combo">
+      <label class="add-file">
         <input
-          class="input"
+          class="add-file__input"
+          type="file"
+          accept=".torrent"
+          (change)="pickFile($event)"
+          [disabled]="saving"
+        />
+        <span class="add-file__cta">
+          <i class="fas fa-upload" aria-hidden="true"></i>
+          <span class="add-file__label">{{ fileName || "Choose a .torrent file…" }}</span>
+        </span>
+      </label>
+    } @else {
+      <label class="add-label" for="nzb-link">NZB link</label>
+      <textarea
+        id="nzb-link"
+        class="add-textarea"
+        rows="3"
+        placeholder="https://example.com/file.nzb"
+        [(ngModel)]="nzbLink"
+        [disabled]="saving"
+      ></textarea>
+
+      <div class="add-divider"><span>or</span></div>
+
+      <label class="add-file">
+        <input
+          class="add-file__input"
+          type="file"
+          accept=".nzb"
+          (change)="pickFile($event)"
+          [disabled]="saving"
+        />
+        <span class="add-file__cta">
+          <i class="fas fa-upload" aria-hidden="true"></i>
+          <span class="add-file__label">{{ fileName || "Choose an .nzb file…" }}</span>
+        </span>
+      </label>
+    }
+  </section>
+
+  <section class="add-card add-grid" aria-label="Quick options">
+    <div>
+      <label class="add-label" for="add-category">Category</label>
+      <div class="add-category-combo">
+        <input
+          id="add-category"
+          class="add-input"
           type="text"
           [(ngModel)]="category"
           (focus)="categoryDropdownOpen = true"
           (input)="categoryDropdownOpen = true"
           (blur)="onCategoryBlur()"
-          placeholder="Type or select a category"
+          placeholder="Type or pick a category"
           autocomplete="off"
         />
         @if (categoryDropdownOpen && filteredCategories.length > 0) {
-          <div class="category-dropdown">
+          <div class="add-category-dropdown">
             @for (cat of filteredCategories; track $index) {
-              <a class="category-option" (mousedown)="selectCategory(cat)">{{ cat }}</a>
+              <a class="add-category-option" (mousedown)="selectCategory(cat)">{{ cat }}</a>
             }
           </div>
         }
       </div>
-      <p class="help">The category becomes a sub-folder in your main download path.</p>
+      <p class="add-help">Becomes a sub-folder in your download path.</p>
     </div>
+    <div>
+      <label class="add-label" for="add-priority">Priority</label>
+      <input
+        id="add-priority"
+        class="add-input"
+        type="number"
+        step="1"
+        placeholder="lowest"
+        [(ngModel)]="priority"
+      />
+      <p class="add-help">1 is the highest. Empty = lowest.</p>
+    </div>
+  </section>
 
-    <div class="field">
-      <label class="label">Priority</label>
-      <div class="control">
-        <input class="input" type="number" step="1" [(ngModel)]="priority" />
+  <details class="add-disclosure">
+    <summary class="add-disclosure__summary">
+      <i class="fas fa-cog add-disclosure__icon" aria-hidden="true"></i>
+      <span>Download options</span>
+      <i class="fas fa-chevron-down add-disclosure__caret" aria-hidden="true"></i>
+    </summary>
+    <div class="add-disclosure__body add-grid">
+      <div>
+        <label class="add-label" for="add-downloader">Downloader</label>
+        <div class="add-select-wrap">
+          <select id="add-downloader" class="add-select" [(ngModel)]="downloadClient" (ngModelChange)="setFinishAction()">
+            <option [ngValue]="0">Bezzad</option>
+            <option [ngValue]="1">Aria2c</option>
+            <option [ngValue]="2">Symlink Downloader</option>
+            <option [ngValue]="3">Synology DownloadStation</option>
+          </select>
+          <i class="fas fa-chevron-down add-select-wrap__caret" aria-hidden="true"></i>
+        </div>
+        <p class="add-help">Which downloader pulls from the provider to your host.</p>
       </div>
-      <p class="help">Set the priority where 1 is the highest. When empty it will be assigned the lowest priority.</p>
+      <div>
+        <label class="add-label" for="add-host-action">Post-download action</label>
+        <div class="add-select-wrap">
+          <select id="add-host-action" class="add-select" [(ngModel)]="hostDownloadAction">
+            <option [ngValue]="0">Download all files to host</option>
+            <option [ngValue]="1">Don't download any files to host</option>
+          </select>
+          <i class="fas fa-chevron-down add-select-wrap__caret" aria-hidden="true"></i>
+        </div>
+        <p class="add-help">Use option 2 to keep the torrent at the provider only.</p>
+      </div>
     </div>
-  </div>
-</div>
+  </details>
 
-<div class="field">
-  <div>
-    <div class="field">
-      <label class="label">Automatic retry downloads</label>
-      <div class="control">
-        <input class="input" type="number" max="1000" min="0" step="1" [(ngModel)]="downloadRetryAttempts" />
+  <details class="add-disclosure">
+    <summary class="add-disclosure__summary">
+      <i class="fas fa-filter add-disclosure__icon" aria-hidden="true"></i>
+      <span>File filtering</span>
+      <i class="fas fa-chevron-down add-disclosure__caret" aria-hidden="true"></i>
+    </summary>
+    <div class="add-disclosure__body">
+      <div>
+        <label class="add-label" for="add-min-size">Minimum file size</label>
+        <div class="add-input-suffix">
+          <input
+            id="add-min-size"
+            class="add-input"
+            type="number"
+            max="1000"
+            min="0"
+            step="1"
+            [(ngModel)]="downloadMinSize"
+          />
+          <span class="add-input-suffix__addon">MB</span>
+        </div>
+        @if (provider === "AllDebrid") {
+          <p class="add-help">AllDebrid groups files into archives, so this isn't strictly enforced.</p>
+        }
+        @if (downloadAction === 2) {
+          <p class="add-help">Does not apply to manually selected files.</p>
+        }
       </div>
-      <p class="help">When a single download fails it will retry it this many times before marking it as failed.</p>
-    </div>
-    <div class="field">
-      <label class="label">Automatic retry download</label>
-      <div class="control">
-        <input class="input" type="number" max="1000" min="0" step="1" [(ngModel)]="torrentRetryAttempts" />
+      <div class="add-grid">
+        <div>
+          <label class="add-label" for="add-include">Include regex</label>
+          <input
+            id="add-include"
+            class="add-input"
+            type="text"
+            placeholder="e.g. \.mkv$"
+            [(ngModel)]="includeRegex"
+            (blur)="verifyRegex()"
+          />
+          <p class="add-help">Only download files matching this pattern.</p>
+          @if (includeRegexError) {
+            <p class="add-help add-help--error">{{ includeRegexError }}</p>
+          }
+        </div>
+        <div>
+          <label class="add-label" for="add-exclude">Exclude regex</label>
+          <input
+            id="add-exclude"
+            class="add-input"
+            type="text"
+            placeholder="e.g. sample"
+            [(ngModel)]="excludeRegex"
+            (blur)="verifyRegex()"
+          />
+          <p class="add-help">Skip files matching this pattern. Use Include OR Exclude, not both.</p>
+          @if (excludeRegexError) {
+            <p class="add-help add-help--error">{{ excludeRegexError }}</p>
+          }
+        </div>
       </div>
-      <p class="help">
-        When a single download has failed multiple times (see setting above) or when the download itself received an
-        error it will retry the full download this many times before marking it failed.
-      </p>
     </div>
-    <div class="field">
-      <label class="label">Delete download when in error</label>
-      <div class="control">
-        <input class="input" type="number" max="100000" min="0" step="1" [(ngModel)]="torrentDeleteOnError" />
-      </div>
-      <p class="help">
-        When a download has been in error for this many minutes, delete it from the provider and the client. 0 to
-        disable.
-      </p>
-    </div>
-    <div class="field">
-      <label class="label">Maximum lifetime</label>
-      <div class="control">
-        <input class="input" type="number" max="100000" min="0" step="1" [(ngModel)]="torrentLifetime" />
-      </div>
-      <p class="help">
-        The maximum lifetime of a download in minutes. When this time has passed, mark it as error. If the download is
-        completed, the lifetime setting will not apply. 0 to disable.
-      </p>
-    </div>
-  </div>
-</div>
+  </details>
 
-<div class="field">
-  <div class="control">
-    @if (error) {
-      <div class="notification is-danger is-light">{{ error }}</div>
-    }
+  <details class="add-disclosure">
+    <summary class="add-disclosure__summary">
+      <i class="fas fa-flag-checkered add-disclosure__icon" aria-hidden="true"></i>
+      <span>After finish</span>
+      <i class="fas fa-chevron-down add-disclosure__caret" aria-hidden="true"></i>
+    </summary>
+    <div class="add-disclosure__body add-grid">
+      <div>
+        <label class="add-label" for="add-finish-action">Finished action</label>
+        <div class="add-select-wrap">
+          <select id="add-finish-action" class="add-select" [(ngModel)]="finishedAction">
+            <option [ngValue]="0">Do nothing</option>
+            @if (downloadClient !== 2) {
+              <option [ngValue]="1">Remove from provider and client</option>
+              <option [ngValue]="2">Remove from provider</option>
+            }
+            <option [ngValue]="3">Remove from client</option>
+          </select>
+          <i class="fas fa-chevron-down add-select-wrap__caret" aria-hidden="true"></i>
+        </div>
+      </div>
+      <div>
+        <label class="add-label" for="add-finish-delay">Finish delay</label>
+        <div class="add-input-suffix">
+          <input id="add-finish-delay" class="add-input" type="number" min="0" [(ngModel)]="finishedActionDelay" />
+          <span class="add-input-suffix__addon">min</span>
+        </div>
+        <p class="add-help">How long to wait before applying the finished action.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="add-disclosure">
+    <summary class="add-disclosure__summary">
+      <i class="fas fa-redo add-disclosure__icon" aria-hidden="true"></i>
+      <span>Retry &amp; lifetime</span>
+      <i class="fas fa-chevron-down add-disclosure__caret" aria-hidden="true"></i>
+    </summary>
+    <div class="add-disclosure__body add-grid">
+      <div>
+        <label class="add-label" for="add-dl-retries">Download retries</label>
+        <input
+          id="add-dl-retries"
+          class="add-input"
+          type="number"
+          max="1000"
+          min="0"
+          step="1"
+          [(ngModel)]="downloadRetryAttempts"
+        />
+        <p class="add-help">Per-file retry attempts before marking that file failed.</p>
+      </div>
+      <div>
+        <label class="add-label" for="add-tor-retries">Torrent retries</label>
+        <input
+          id="add-tor-retries"
+          class="add-input"
+          type="number"
+          max="1000"
+          min="0"
+          step="1"
+          [(ngModel)]="torrentRetryAttempts"
+        />
+        <p class="add-help">Re-add the whole torrent this many times if it errors.</p>
+      </div>
+      <div>
+        <label class="add-label" for="add-del-on-error">Delete on error</label>
+        <div class="add-input-suffix">
+          <input
+            id="add-del-on-error"
+            class="add-input"
+            type="number"
+            max="100000"
+            min="0"
+            step="1"
+            [(ngModel)]="torrentDeleteOnError"
+          />
+          <span class="add-input-suffix__addon">min</span>
+        </div>
+        <p class="add-help">After this many minutes in error, remove from provider + client. 0 disables.</p>
+      </div>
+      <div>
+        <label class="add-label" for="add-lifetime">Maximum lifetime</label>
+        <div class="add-input-suffix">
+          <input
+            id="add-lifetime"
+            class="add-input"
+            type="number"
+            max="100000"
+            min="0"
+            step="1"
+            [(ngModel)]="torrentLifetime"
+          />
+          <span class="add-input-suffix__addon">min</span>
+        </div>
+        <p class="add-help">Mark the torrent as error after this long. 0 disables.</p>
+      </div>
+    </div>
+  </details>
+
+  @if (error) {
+    <div class="add-error">
+      <i class="fas fa-exclamation-circle" aria-hidden="true"></i>
+      <span>{{ error }}</span>
+    </div>
+  }
+
+  <div class="add-submit-row">
+    <button
+      type="button"
+      class="add-submit"
+      [disabled]="saving"
+      [ngClass]="{ 'is-loading': saving }"
+      (click)="ok()"
+    >
+      <i class="fas fa-plus" aria-hidden="true"></i>
+      <span>{{ type === "torrent" ? "Add Torrent" : "Add NZB" }}</span>
+    </button>
   </div>
 </div>

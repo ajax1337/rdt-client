@@ -97,17 +97,38 @@ public class SettingsController(Settings settings, Torrents torrents) : Controll
     {
         var downloadPath = Settings.Get.DownloadClient.DownloadPath;
 
-        var testFilePath = Path.Combine(downloadPath, "testDefault.rar");
+        // Speed-test source. The historical default was
+        // https://34.download.real-debrid.com/speedtest/testDefault.rar, but server
+        // 34 in RealDebrid's CDN pool is unreachable from many networks (TCP
+        // straight up refuses). Switching to server 20 — empirically reachable
+        // from a wider set of hosts and serves the same 10 GB octet-stream
+        // (~130 MB/s in testing). Still a public RealDebrid CDN URL, no auth.
+        // TorBox has no equivalent public speed-test file (their CDN nodes
+        // require per-user tokens), so RD's server is the cleanest provider-
+        // hosted option regardless of which debrid you actually use.
+        // Override with RDTCLIENT_SPEEDTEST_URL for a closer mirror.
+        var testUrl = Environment.GetEnvironmentVariable("RDTCLIENT_SPEEDTEST_URL");
+        if (String.IsNullOrWhiteSpace(testUrl))
+        {
+            testUrl = "https://20.download.real-debrid.com/speedtest/testDefault.rar";
+        }
+        var testFileName = Path.GetFileName(new Uri(testUrl).AbsolutePath);
+        if (String.IsNullOrEmpty(testFileName))
+        {
+            testFileName = "speedtest.bin";
+        }
+
+        var testFilePath = Path.Combine(downloadPath, testFileName);
 
         await FileHelper.Delete(testFilePath);
 
         var download = new Download
         {
-            Link = "https://34.download.real-debrid.com/speedtest/testDefault.rar",
+            Link = testUrl,
             Torrent = new()
             {
                 DownloadClient = Settings.Get.DownloadClient.Client == DownloadClient.Symlink ? DownloadClient.Bezzad : Settings.Get.DownloadClient.Client,
-                RdName = "testDefault.rar"
+                RdName = testFileName
             }
         };
 
@@ -119,6 +140,14 @@ public class SettingsController(Settings settings, Torrents torrents) : Controll
         {
             Timeout = TimeSpan.FromSeconds(10)
         };
+
+        // Hard ceiling so the endpoint always returns. Without a cap the polling
+        // loop runs as long as `Finished` stays false — if aria2 can't even reach
+        // the test URL (e.g. the RealDebrid CDN host is unreachable from the
+        // host network), it errors and retries in a tight loop and the spinner
+        // on the Settings page spins forever. Bail at 30 s with a 400 + the
+        // last-known speed so the user sees a failure instead of a hang.
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
 
         while (!downloadClient.Finished)
         {
@@ -143,6 +172,18 @@ public class SettingsController(Settings settings, Torrents torrents) : Controll
                 await downloadClient.Cancel();
 
                 break;
+            }
+
+            if (DateTimeOffset.UtcNow >= deadline)
+            {
+                await downloadClient.Cancel();
+                await FileHelper.Delete(testFilePath);
+
+                var why = downloadClient.BytesDone == 0
+                    ? "Could not reach the speed-test URL (no bytes received in 30 s). Check that your host can reach real-debrid.com and that the configured downloader is working."
+                    : $"Test timed out after 30 s with only {downloadClient.BytesDone} bytes received.";
+
+                return BadRequest(why);
             }
         }
 
