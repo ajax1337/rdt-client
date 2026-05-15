@@ -1,56 +1,95 @@
+// Settings page. Reuses the .add-* form primitives from global styles.scss
+// (label/input/select/help/btn-ghost/submit/error/success). This file only
+// holds the bits that are unique to settings: the per-tab intro, the
+// section heading divider, and the categories editor.
+
+.settings-page {
+  max-width: 56rem;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.settings-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+
+  &__intro {
+    color: #8b94a7;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    margin: 0;
+  }
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+
+  &__heading {
+    color: #e6e9ef;
+    font-size: 0.95rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    padding-bottom: 0.45rem;
+    border-bottom: 1px solid #222a3a;
+    margin-bottom: 0.15rem;
+
+    &:not(:first-child) {
+      margin-top: 0.75rem;
+    }
+  }
+}
+
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
 .categories-symlink-warning {
-  margin-bottom: 0.75rem;
+  margin-bottom: 0.6rem;
   padding: 0.6rem 0.85rem;
   border-radius: 6px;
   border-left: 3px solid #f6c453;
   background: rgba(246, 196, 83, 0.08);
-  font-size: 0.85rem;
+  font-size: 0.83rem;
   line-height: 1.45;
   color: rgba(255, 255, 255, 0.85);
 
-  strong {
-    color: #ffd884;
-  }
+  strong { color: #ffd884; }
 }
 
 .categories-editor {
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
-  margin-bottom: 0.5rem;
+  gap: 0.55rem;
 }
 
 .category-card {
-  position: relative;
-  padding: 0.85rem 1rem 0.7rem;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.025);
-  transition:
-    border-color 120ms ease,
-    background 120ms ease;
+  padding: 0.7rem 0.85rem 0.6rem;
+  border: 1px solid #222a3a;
+  border-radius: 0.5rem;
+  background: rgba(255, 255, 255, 0.02);
+  transition: border-color 120ms ease, background 120ms ease;
 
-  &:hover {
-    border-color: rgba(255, 255, 255, 0.16);
-    background: rgba(255, 255, 255, 0.04);
-  }
+  &:hover { border-color: #2c364c; background: rgba(255, 255, 255, 0.04); }
 
   &__header {
     display: flex;
     gap: 0.5rem;
     align-items: center;
     margin-bottom: 0.55rem;
-
-    .input {
-      flex: 1 1 auto;
-      min-width: 0;
-    }
+    .add-input { flex: 1 1 auto; min-width: 0; }
   }
 
   &__remove {
     flex: 0 0 auto;
-    width: 2rem;
-    height: 2rem;
+    width: 2.1rem;
+    height: 2.1rem;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -58,37 +97,26 @@
     border: 1px solid rgba(255, 107, 107, 0.25);
     background: transparent;
     color: #ff8a8a;
-    border-radius: 6px;
+    border-radius: 0.45rem;
     cursor: pointer;
-    font-size: 1.05rem;
-    line-height: 1;
-    transition:
-      background 120ms ease,
-      border-color 120ms ease,
-      color 120ms ease;
-
-    &:hover {
-      background: rgba(255, 107, 107, 0.12);
-      border-color: rgba(255, 107, 107, 0.45);
-      color: #ffb3b3;
-    }
+    transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+    &:hover { background: rgba(255, 107, 107, 0.12); border-color: rgba(255, 107, 107, 0.45); color: #ffb3b3; }
   }
 
   &__actions {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
-    gap: 0.35rem 1.1rem;
-    font-size: 0.85rem;
+    gap: 0.3rem 1rem;
+    font-size: 0.83rem;
   }
 
   &__actions-label {
     text-transform: uppercase;
-    letter-spacing: 0.05em;
-    font-size: 0.7rem;
+    letter-spacing: 0.06em;
+    font-size: 0.68rem;
     font-weight: 600;
-    color: rgba(255, 255, 255, 0.55);
-    margin-right: 0.25rem;
+    color: rgba(255, 255, 255, 0.5);
   }
 
   &__toggle {
@@ -98,25 +126,12 @@
     gap: 0.35rem;
     cursor: pointer;
     user-select: none;
-    padding: 0.15rem 0.5rem;
-    border-radius: 4px;
-    transition: background 120ms ease;
-
-    input[type='checkbox'] {
-      margin: 0;
-    }
-
-    &:hover {
-      background: rgba(255, 255, 255, 0.05);
-    }
-
-    &--active {
-      color: #6cc4ff;
-      font-weight: 500;
-    }
+    padding: 0.15rem 0.55rem;
+    border-radius: 0.35rem;
+    color: #c9d1de;
+    transition: background 120ms ease, color 120ms ease;
+    input[type="checkbox"] { margin: 0; accent-color: #6cc4ff; }
+    &:hover { background: rgba(255, 255, 255, 0.05); }
+    &--active { color: #6cc4ff; font-weight: 500; }
   }
-}
-
-.category-add {
-  align-self: flex-start;
 }
