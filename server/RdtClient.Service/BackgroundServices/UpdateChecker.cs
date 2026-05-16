@@ -13,6 +13,13 @@ public class UpdateChecker(ILogger<UpdateChecker> logger, IHttpClientFactory htt
 
     public static Boolean? IsInsecure { get; private set; }
 
+    // Repo to check for new tags + security advisories. Defaults to our fork so
+    // the update banner stays in sync with our v2.x.y release line. Override with
+    // RDTCLIENT_UPDATE_REPO=<owner>/<name> if you maintain your own fork.
+    private static String UpdateRepo => Environment.GetEnvironmentVariable("RDTCLIENT_UPDATE_REPO") is { Length: > 0 } envRepo
+        ? envRepo
+        : "ajax1337/rdt-client";
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         while (!Startup.Ready)
@@ -31,13 +38,13 @@ public class UpdateChecker(ILogger<UpdateChecker> logger, IHttpClientFactory htt
 
         CurrentVersion = $"v{version[..version.LastIndexOf('.')]}";
 
-        logger.LogInformation("UpdateChecker started, currently on version {CurrentVersion}.", CurrentVersion);
+        logger.LogInformation("UpdateChecker started, currently on version {CurrentVersion}, watching {Repo} for new tags.", CurrentVersion, UpdateRepo);
 
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                var gitHubReleases = await GitHubRequest<List<GitHubReleasesResponse>>("/repos/rogerfar/rdt-client/tags?per_page=1", stoppingToken);
+                var gitHubReleases = await GitHubRequest<List<GitHubReleasesResponse>>($"/repos/{UpdateRepo}/tags?per_page=1", stoppingToken);
 
                 var latestRelease = gitHubReleases?.FirstOrDefault(m => m.Name != null)?.Name;
 
@@ -55,7 +62,7 @@ public class UpdateChecker(ILogger<UpdateChecker> logger, IHttpClientFactory htt
 
                 LatestVersion = latestRelease;
 
-                var gitHubSecurityAdvisories = await GitHubRequest<List<GitHubSecurityAdvisoriesResponse>>("/repos/rogerfar/rdt-client/security-advisories", stoppingToken);
+                var gitHubSecurityAdvisories = await GitHubRequest<List<GitHubSecurityAdvisoriesResponse>>($"/repos/{UpdateRepo}/security-advisories", stoppingToken);
 
                 var unseenGhsaIds = gitHubSecurityAdvisories?.Where(advisory => !KnownGhsaIds.Contains(advisory.GhsaId));
 

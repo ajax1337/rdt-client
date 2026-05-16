@@ -8,7 +8,11 @@ public static class TorrentDtoMapper
 {
     public static TorrentDto ToListDto(Torrent torrent, Func<Guid, (Int64 Speed, Int64 BytesTotal, Int64 BytesDone)> getDownloadStats)
     {
-        return ToDto(torrent, getDownloadStats, includeDownloads: false, includeFiles: false, includeFileOrMagnet: false);
+        // includeDownloads = true so the cold REST GET that the dashboard issues on load
+        // carries the same shape as the SignalR push. Without this, the frontend would
+        // render with downloads:[] for ~1 s after every page load / reconnect, which makes
+        // the progress bar fall back to rdProgress (often 100% for cached torrents).
+        return ToDto(torrent, getDownloadStats, includeDownloads: true, includeFiles: false, includeFileOrMagnet: false);
     }
 
     public static TorrentDto ToUpdateDto(Torrent torrent, Func<Guid, (Int64 Speed, Int64 BytesTotal, Int64 BytesDone)> getDownloadStats)
@@ -28,6 +32,8 @@ public static class TorrentDtoMapper
                                     Boolean includeFileOrMagnet)
     {
         var downloads = includeDownloads ? torrent.Downloads.Select(download => ToDto(download, getDownloadStats)).ToList() : [];
+
+        var (statusText, localProgress) = GetStatusTextAndProgress(torrent, getDownloadStats);
 
         return new()
         {
@@ -68,7 +74,8 @@ public static class TorrentDtoMapper
             RdEnded = torrent.RdEnded,
             RdSpeed = torrent.RdSpeed,
             RdSeeders = torrent.RdSeeders,
-            StatusText = GetStatusText(torrent, getDownloadStats),
+            LocalProgress = localProgress,
+            StatusText = statusText,
             FilesCount = torrent.Files.Count,
             DownloadsCount = torrent.Downloads.Count,
             Files = includeFiles ? torrent.Files : [],
@@ -102,11 +109,19 @@ public static class TorrentDtoMapper
         };
     }
 
-    private static String GetStatusText(Torrent torrent, Func<Guid, (Int64 Speed, Int64 BytesTotal, Int64 BytesDone)> getDownloadStats)
+    /// <summary>
+    /// Computes the user-facing status string and the local-download progress percentage
+    /// from a single pass over <see cref="Torrent.Downloads"/>. Both outputs share the same
+    /// per-download view of "in-flight" vs "finished" so the dashboard's status pill and
+    /// progress bar can never disagree.
+    /// </summary>
+    private static (String StatusText, Int64? LocalProgress) GetStatusTextAndProgress(
+        Torrent torrent,
+        Func<Guid, (Int64 Speed, Int64 BytesTotal, Int64 BytesDone)> getDownloadStats)
     {
         if (!String.IsNullOrWhiteSpace(torrent.Error))
         {
-            return torrent.Error;
+            return (torrent.Error, null);
         }
 
         if (torrent.Downloads.Count > 0)
@@ -116,13 +131,13 @@ public static class TorrentDtoMapper
             var downloadedCount = 0;
             Int64 downloadingBytesDone = 0;
             Int64 downloadingBytesTotal = 0;
-            Int64 downloadingSpeed = 0;
             var unpackingCount = 0;
             var unpackedCount = 0;
             Int64 unpackingBytesDone = 0;
             Int64 unpackingBytesTotal = 0;
             var queuedForUnpackingCount = 0;
             var queuedForDownloadingCount = 0;
+            Double progressUnits = 0d;
 
             foreach (var download in torrent.Downloads)
             {
@@ -131,27 +146,31 @@ public static class TorrentDtoMapper
                     allFinished = false;
                 }
 
-                var (speed, bytesTotal, bytesDone) = getDownloadStats(download.DownloadId);
+                var (_, bytesTotal, bytesDone) = getDownloadStats(download.DownloadId);
 
                 if (download.DownloadFinished != null)
                 {
                     downloadedCount += 1;
+                    progressUnits += 1d;
                 }
-
-                if (download.DownloadStarted != null && download.DownloadFinished == null && bytesDone > 0)
+                else if (download.DownloadStarted != null)
                 {
+                    // In-flight. We deliberately do NOT gate on bytesDone > 0 — a freshly
+                    // started download briefly returns (0, 0, 0) from the live tracker
+                    // between aria2 chunks, and that 0-byte window used to flip the
+                    // status text into "Queued for downloading" and the bar into 100%
+                    // (because the only contributors were the completed siblings).
                     downloadingCount += 1;
                     downloadingBytesDone += bytesDone;
                     downloadingBytesTotal += bytesTotal;
-                    downloadingSpeed += speed;
+                    progressUnits += bytesTotal > 0 ? Math.Clamp((Double)bytesDone / bytesTotal, 0d, 1d) : 0d;
                 }
 
                 if (download.UnpackingFinished != null)
                 {
                     unpackedCount += 1;
                 }
-
-                if (download.UnpackingStarted != null && download.UnpackingFinished == null && bytesDone > 0)
+                else if (download.UnpackingStarted != null)
                 {
                     unpackingCount += 1;
                     unpackingBytesDone += bytesDone;
@@ -169,56 +188,62 @@ public static class TorrentDtoMapper
                 }
             }
 
+            // File-count weighted: each download counts as one unit, completed = 1,
+            // in-flight = bytesDone/bytesTotal (0 if size not yet known), queued = 0.
+            // This is monotone within a torrent's lifetime and immune to the 0-byte
+            // tracker window that breaks byte-weighted math.
+            var localProgress = (Int64)Math.Round(Math.Clamp(progressUnits / torrent.Downloads.Count * 100d, 0d, 100d));
+
             if (allFinished)
             {
-                return "Finished";
+                return ("Finished", localProgress);
             }
 
             if (downloadingCount > 0)
             {
                 var progress = downloadingBytesTotal == 0 ? 0 : (Double)downloadingBytesDone / downloadingBytesTotal * 100;
 
-                return $"Downloading file {downloadingCount + downloadedCount}/{torrent.Downloads.Count} ({progress:0.00}% - {FileSizeHelper.FormatSize(downloadingSpeed)}/s)";
+                return ($"Downloading file {downloadingCount + downloadedCount}/{torrent.Downloads.Count} ({progress:0.00}%)", localProgress);
             }
 
             if (unpackingCount > 0)
             {
                 var progress = unpackingBytesTotal == 0 ? 0 : (Double)unpackingBytesDone / unpackingBytesTotal * 100;
 
-                return $"Extracting file {unpackingCount + unpackedCount}/{torrent.Downloads.Count} ({progress:0.00}%)";
+                return ($"Extracting file {unpackingCount + unpackedCount}/{torrent.Downloads.Count} ({progress:0.00}%)", localProgress);
             }
 
             if (queuedForUnpackingCount > 0)
             {
-                return "Queued for unpacking";
+                return ("Queued for unpacking", localProgress);
             }
 
             if (queuedForDownloadingCount > 0)
             {
-                return "Queued for downloading";
+                return ("Queued for downloading", localProgress);
             }
 
             if (unpackedCount > 0)
             {
-                return "Files unpacked";
+                return ("Files unpacked", localProgress);
             }
 
             if (downloadedCount > 0)
             {
-                return "Files downloaded to host";
+                return ("Files downloaded to host", localProgress);
             }
         }
 
         if (torrent.Completed != null)
         {
-            return "Finished";
+            return ("Finished", null);
         }
 
-        return torrent.RdStatus switch
+        var providerStatusText = torrent.RdStatus switch
         {
             TorrentStatus.Queued => "Not Yet Added to Provider",
             TorrentStatus.Downloading when torrent.RdSeeders < 1 && torrent.Type != DownloadType.Nzb => "Torrent stalled",
-            TorrentStatus.Downloading => $"Torrent downloading ({torrent.RdProgress}% - {FileSizeHelper.FormatSize(torrent.RdSpeed)}/s)",
+            TorrentStatus.Downloading => $"Torrent downloading ({torrent.RdProgress}%)",
             TorrentStatus.Processing => "Torrent processing",
             TorrentStatus.WaitingForFileSelection => "Torrent waiting for file selection",
             TorrentStatus.Error => $"Torrent error: {torrent.RdStatusRaw}",
@@ -226,5 +251,8 @@ public static class TorrentDtoMapper
             TorrentStatus.Uploading => "Torrent uploading",
             _ => "Unknown status"
         };
+
+        // No local downloads yet — let the frontend fall back to rdProgress.
+        return (providerStatusText, null);
     }
 }

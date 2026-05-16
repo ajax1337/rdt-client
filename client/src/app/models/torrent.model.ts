@@ -37,6 +37,9 @@ export class Torrent {
   public rdHost: string;
   public rdSplit: number;
   public rdProgress: number;
+  // Server-computed local-download progress (file-count weighted across torrent.downloads).
+  // Null when the torrent has no local downloads yet — frontend falls back to rdProgress.
+  public localProgress?: number | null;
   public rdStatus: RealDebridStatus;
   public rdStatusRaw: string;
   public rdAdded: Date;

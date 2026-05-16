@@ -126,6 +126,8 @@ public class TorrentsController(ILogger<TorrentsController> logger, Torrents tor
             return BadRequest();
         }
 
+        request.MagnetLink = request.MagnetLink?.Trim();
+
         if (String.IsNullOrEmpty(request.MagnetLink))
         {
             return BadRequest("Invalid magnet link");
@@ -225,6 +227,8 @@ public class TorrentsController(ILogger<TorrentsController> logger, Torrents tor
         {
             return BadRequest();
         }
+
+        request.MagnetLink = request.MagnetLink?.Trim();
 
         if (String.IsNullOrEmpty(request.MagnetLink))
         {

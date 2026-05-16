@@ -11,9 +11,24 @@ using Torrent = RdtClient.Data.Models.Data.Torrent;
 
 namespace RdtClient.Service.Services.DebridClients;
 
+public sealed record TorBoxAddTorrentResult(String Hash, Int32? TorrentId);
+
 public class TorBoxDebridClient(ILogger<TorBoxDebridClient> logger, IHttpClientFactory httpClientFactory, IDownloadableFileFilter fileFilter, IRateLimitCoordinator coordinator)
     : IDebridClient
 {
+    // TorBox file downloads are addressed by torrent_id + file_id (or "zip" for the
+    // bundle). RDT stores these as a placeholder URL in Download.Path because the real
+    // download URL has to be minted with the user's API key at request time. The
+    // /fakedl/ prefix is parsed by TryGetFileId at the bottom of this file — keep the
+    // builders and the parser in lock-step.
+    private const String FakeDlUrlPrefix = "https://torbox.app/fakedl";
+    private const String FakeDlZipSegment = "zip";
+
+    private static String BuildFakeDlUrl(Int64 torrentId, String fileSegment)
+    {
+        return $"{FakeDlUrlPrefix}/{torrentId}/{fileSegment}";
+    }
+
     private const String TorBoxApiHost = "api.torbox.app";
     private static readonly JsonSerializerSettings JsonSerializerSettings = new()
     {
@@ -96,12 +111,21 @@ public class TorBoxDebridClient(ILogger<TorBoxDebridClient> logger, IHttpClientF
 
     public async Task<String> AddTorrentMagnet(String magnetLink)
     {
+        var result = await AddTorrentMagnetWithInfo(magnetLink);
+
+        return result.Hash;
+    }
+
+    public async Task<TorBoxAddTorrentResult> AddTorrentMagnetWithInfo(String magnetLink)
+    {
+        magnetLink = magnetLink.Trim();
+
         return await HandleAddTorrentErrors(async asQueued =>
         {
             var seedTorrents = await GetSeedTorrentsSetting();
             var result = await GetClient(DiConfig.TORBOX_CLIENT_SLOW).Torrents.AddMagnetAsync(magnetLink, seedTorrents, as_queued: asQueued);
 
-            return result.Data!.Hash!;
+            return new TorBoxAddTorrentResult(result.Data!.Hash!, result.Data.TorrentId);
         });
     }
 
@@ -225,6 +249,31 @@ public class TorBoxDebridClient(ILogger<TorBoxDebridClient> logger, IHttpClientF
         }
 
         return [];
+    }
+
+    public async Task<Boolean> IsTorrentAvailable(String hash)
+    {
+        var availability = await GetTorrentAvailability(hash);
+
+        return availability.Data?.Count > 0;
+    }
+
+    public async Task<DebridClientTorrent?> GetTorrentByProviderId(Int32 torrentId)
+    {
+        var torrent = await HandleErrors(() => GetClient().Torrents.GetIdInfoAsync(torrentId, true));
+
+        return torrent == null ? null : Map(torrent);
+    }
+
+    public DownloadInfo CreateZipDownloadInfo(Int32 torrentId, String? torrentName)
+    {
+        var fileName = String.IsNullOrWhiteSpace(torrentName) ? $"torbox-{torrentId}.zip" : $"{torrentName}.zip";
+
+        return new()
+        {
+            RestrictedLink = BuildFakeDlUrl(torrentId, FakeDlZipSegment),
+            FileName = fileName
+        };
     }
 
     /// <inheritdoc />
@@ -449,7 +498,7 @@ public class TorBoxDebridClient(ILogger<TorBoxDebridClient> logger, IHttpClientF
             [
                 new()
                 {
-                    RestrictedLink = $"https://torbox.app/fakedl/{id}/zip",
+                    RestrictedLink = BuildFakeDlUrl(id.Value, FakeDlZipSegment),
                     FileName = $"{torrent.RdName}.zip"
                 }
             ];
@@ -459,7 +508,7 @@ public class TorBoxDebridClient(ILogger<TorBoxDebridClient> logger, IHttpClientF
 
         return downloadableFiles.Select(file => new DownloadInfo
                                 {
-                                    RestrictedLink = $"https://torbox.app/fakedl/{id}/{file.Id}",
+                                    RestrictedLink = BuildFakeDlUrl(id.Value, file.Id.ToString()),
                                     FileName = Path.GetFileName(file.Path)
                                 })
                                 .ToList();
@@ -561,7 +610,7 @@ public class TorBoxDebridClient(ILogger<TorBoxDebridClient> logger, IHttpClientF
             Hash = torrent.Hash,
             Bytes = torrent.Size,
             OriginalBytes = torrent.Size,
-            Host = torrent.DownloadPresent.ToString(),
+            Host = IsTorBoxDownloadReady(torrent.DownloadPresent, torrent.Cached, torrent.DownloadFinished).ToString(),
             Split = 0,
             Progress = (Int64)(torrent.Progress * 100.0),
             Status = torrent.DownloadState,
@@ -599,7 +648,7 @@ public class TorBoxDebridClient(ILogger<TorBoxDebridClient> logger, IHttpClientF
             Hash = usenet.Hash,
             Bytes = usenet.Size,
             OriginalBytes = usenet.Size,
-            Host = usenet.DownloadPresent.ToString(),
+            Host = IsTorBoxDownloadReady(usenet.DownloadPresent, usenet.Cached, usenet.DownloadFinished).ToString(),
             Split = 0,
             Progress = (Int64)(usenet.Progress * 100.0),
             Status = usenet.DownloadState,
@@ -683,7 +732,7 @@ public class TorBoxDebridClient(ILogger<TorBoxDebridClient> logger, IHttpClientF
         }
     }
 
-    private async Task<String> HandleAddTorrentErrors(Func<Boolean, Task<String>> action)
+    private async Task<T> HandleAddTorrentErrors<T>(Func<Boolean, Task<T>> action)
     {
         return await HandleErrors(() => action(false));
     }
@@ -826,7 +875,11 @@ public class TorBoxDebridClient(ILogger<TorBoxDebridClient> logger, IHttpClientF
     {
         var segments = link.Split('/', StringSplitOptions.RemoveEmptyEntries);
 
-        if (segments is not [_, _, "fakedl", _, var fileIdStr] || fileIdStr.Equals("zip", StringComparison.OrdinalIgnoreCase))
+        // Mirrors BuildFakeDlUrl. The 5-segment shape after RemoveEmptyEntries is
+        // [scheme, host, "fakedl", torrentId, fileSegment]. The zip variant lives at
+        // the same URL pattern but is handled by a different code path, so it's not
+        // a numeric file id — return null and let the caller fall back.
+        if (segments is not [_, _, "fakedl", _, var fileIdStr] || fileIdStr.Equals(FakeDlZipSegment, StringComparison.OrdinalIgnoreCase))
         {
             return null;
         }
@@ -854,6 +907,11 @@ public class TorBoxDebridClient(ILogger<TorBoxDebridClient> logger, IHttpClientF
         var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
 
         return parts.Length > 1 ? String.Join("/", parts.Skip(1)) : path;
+    }
+
+    private static Boolean IsTorBoxDownloadReady(Boolean downloadPresent, Boolean cached, Boolean downloadFinished)
+    {
+        return downloadPresent || cached || downloadFinished;
     }
 
     private TorrentStatus LogUnmappedStatus(String? status, Torrent torrent)

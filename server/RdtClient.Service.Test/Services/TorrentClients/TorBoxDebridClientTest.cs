@@ -86,6 +86,88 @@ public class TorBoxDebridClientTest
         Assert.Equal(DownloadType.Nzb, nzbResult.Type);
     }
 
+    [Theory]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(false, false, true)]
+    public async Task GetDownloads_MarksTorBoxTorrentReady_WhenAnyReadySignalIsPresent(Boolean downloadPresent, Boolean cached, Boolean downloadFinished)
+    {
+        // Arrange
+        var torrents = new List<TorrentInfoResult>
+        {
+            new()
+            {
+                Id = 12345,
+                Hash = "hash1",
+                Name = "torrent1",
+                Size = 1000,
+                DownloadState = "completed",
+                DownloadPresent = downloadPresent,
+                Cached = cached,
+                DownloadFinished = downloadFinished,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow,
+                Files =
+                [
+                    new()
+                    {
+                        Id = 1,
+                        Name = "folder/file1.mkv",
+                        Size = 1000
+                    }
+                ]
+            }
+        };
+
+        var clientMock = new Mock<TorBoxDebridClient>(_loggerMock.Object, _httpClientFactoryMock.Object, _fileFilterMock.Object, _coordinatorMock.Object);
+        clientMock.Protected().Setup<Task<IEnumerable<TorrentInfoResult>?>>("GetCurrentTorrents").ReturnsAsync(torrents);
+        clientMock.Protected().Setup<Task<IEnumerable<TorrentInfoResult>?>>("GetQueuedTorrents").ReturnsAsync(new List<TorrentInfoResult>());
+        clientMock.Protected().Setup<Task<IEnumerable<UsenetInfoResult>?>>("GetCurrentUsenet").ReturnsAsync(new List<UsenetInfoResult>());
+        clientMock.Protected().Setup<Task<IEnumerable<UsenetInfoResult>?>>("GetQueuedUsenet").ReturnsAsync(new List<UsenetInfoResult>());
+
+        // Act
+        var result = await clientMock.Object.GetDownloads();
+
+        // Assert
+        var torrentResult = Assert.Single(result);
+        Assert.Equal("True", torrentResult.Host);
+    }
+
+    [Fact]
+    public async Task GetDownloads_KeepsTorBoxTorrentNotReady_WhenNoReadySignalIsPresent()
+    {
+        // Arrange
+        var torrents = new List<TorrentInfoResult>
+        {
+            new()
+            {
+                Id = 12345,
+                Hash = "hash1",
+                Name = "torrent1",
+                Size = 1000,
+                DownloadState = "completed",
+                DownloadPresent = false,
+                Cached = false,
+                DownloadFinished = false,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            }
+        };
+
+        var clientMock = new Mock<TorBoxDebridClient>(_loggerMock.Object, _httpClientFactoryMock.Object, _fileFilterMock.Object, _coordinatorMock.Object);
+        clientMock.Protected().Setup<Task<IEnumerable<TorrentInfoResult>?>>("GetCurrentTorrents").ReturnsAsync(torrents);
+        clientMock.Protected().Setup<Task<IEnumerable<TorrentInfoResult>?>>("GetQueuedTorrents").ReturnsAsync(new List<TorrentInfoResult>());
+        clientMock.Protected().Setup<Task<IEnumerable<UsenetInfoResult>?>>("GetCurrentUsenet").ReturnsAsync(new List<UsenetInfoResult>());
+        clientMock.Protected().Setup<Task<IEnumerable<UsenetInfoResult>?>>("GetQueuedUsenet").ReturnsAsync(new List<UsenetInfoResult>());
+
+        // Act
+        var result = await clientMock.Object.GetDownloads();
+
+        // Assert
+        var torrentResult = Assert.Single(result);
+        Assert.Equal("False", torrentResult.Host);
+    }
+
     [Fact]
     public async Task GetAvailableFiles_ReturnsTorrentFiles_WhenTorrentFound()
     {
@@ -679,6 +761,55 @@ public class TorBoxDebridClientTest
         // Assert
         Assert.Equal("https://real-usenet-link", result);
         usenetApiMock.Verify(m => m.RequestDownloadAsync(98765, 4321, false, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task AddTorrentMagnet_TrimsWhitespaceBeforeSendingToTorBox()
+    {
+        // Arrange
+        var magnetLink = "magnet:?xt=urn:btih:test";
+        var torrentsApiMock = new Mock<ITorrentsApi>();
+        var userApiMock = new Mock<IUserApi>();
+
+        var clientMock = new Mock<TorBoxDebridClient>(_loggerMock.Object, _httpClientFactoryMock.Object, _fileFilterMock.Object, _coordinatorMock.Object)
+        {
+            CallBase = true
+        };
+
+        var torBoxClientMock = new Mock<ITorBoxNetClient>();
+
+        torBoxClientMock.Setup(m => m.Torrents).Returns(torrentsApiMock.Object);
+        torBoxClientMock.Setup(m => m.User).Returns(userApiMock.Object);
+        clientMock.Protected().Setup<ITorBoxNetClient>("GetClient", ItExpr.IsAny<String>()).Returns(torBoxClientMock.Object);
+
+        userApiMock.Setup(m => m.GetAsync(true, It.IsAny<CancellationToken>()))
+                   .ReturnsAsync(new Response<User>
+                   {
+                       Data = new()
+                       {
+                           Settings = new()
+                           {
+                               SeedTorrents = 5
+                           }
+                       }
+                   });
+
+        torrentsApiMock.Setup(m => m.AddMagnetAsync(magnetLink, 5, It.IsAny<Boolean>(), It.IsAny<String?>(), false, It.IsAny<CancellationToken>()))
+                       .ReturnsAsync(new Response<TorrentAddResult>
+                       {
+                           Data = new()
+                           {
+                               Hash = "test"
+                           }
+                       });
+
+        // Act
+        var result = await clientMock.Object.AddTorrentMagnet($"  {magnetLink}  ");
+
+        // Assert
+        Assert.Equal("test", result);
+        torrentsApiMock.Verify(m => m.AddMagnetAsync(magnetLink, 5, It.IsAny<Boolean>(), It.IsAny<String?>(), false, It.IsAny<CancellationToken>()), Times.Once);
+        torrentsApiMock.Verify(m => m.AddMagnetAsync(It.Is<String>(value => value != magnetLink), It.IsAny<Int32>(), It.IsAny<Boolean>(), It.IsAny<String?>(), It.IsAny<Boolean>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

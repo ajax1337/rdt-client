@@ -14,7 +14,6 @@ using RdtClient.Data.Models.Data;
 using RdtClient.Data.Models.DebridClient;
 using RdtClient.Data.Models.Internal;
 using RdtClient.Service.BackgroundServices;
-using RdtClient.Service.BackgroundServices;
 using RdtClient.Service.Helpers;
 using RdtClient.Service.Services.DebridClients;
 using RdtClient.Service.Wrappers;
@@ -184,6 +183,7 @@ public class Torrents(
 
     public virtual async Task<Torrent> AddMagnetToDebridQueue(String magnetLink, Torrent torrent)
     {
+        magnetLink = magnetLink.Trim();
         var enriched = await enricher.EnrichMagnetLink(magnetLink);
         MagnetLink magnet;
 
@@ -380,12 +380,14 @@ public class Torrents(
 
         logger.LogDebug("Adding {hash} to debrid provider {torrentInfo}", torrent.Hash, torrent.ToLog());
 
+        var torBoxCachedBeforeAdd = await IsTorBoxCachedBeforeAdd(torrent);
+        Int32? torBoxProviderId = null;
+        String id;
+
         await RealDebridUpdateLock.WaitAsync();
 
         try
         {
-            String id;
-
             if (torrent.Type == DownloadType.Nzb)
             {
                 id = torrent.IsFile
@@ -394,16 +396,36 @@ public class Torrents(
             }
             else
             {
-                id = torrent.IsFile
-                    ? await DebridClient.AddTorrentFile(Convert.FromBase64String(torrent.FileOrMagnet))
-                    : await DebridClient.AddTorrentMagnet(torrent.FileOrMagnet);
+                if (IsTorBoxTorrentMagnet(torrent))
+                {
+                    var result = await torBoxDebridClient.AddTorrentMagnetWithInfo(torrent.FileOrMagnet);
+                    id = result.Hash;
+                    torBoxProviderId = result.TorrentId;
+                }
+                else
+                {
+                    id = torrent.IsFile
+                        ? await DebridClient.AddTorrentFile(Convert.FromBase64String(torrent.FileOrMagnet))
+                        : await DebridClient.AddTorrentMagnet(torrent.FileOrMagnet);
+                }
             }
 
             await torrentData.UpdateRdId(torrent, id);
+
+            // UpdateRdId mutates the DB row but not the passed-in entity. Subsequent
+            // code in this method and downstream (e.g. UpdateTorrentClientData) reads
+            // torrent.RdId, so this assignment is load-bearing — don't remove it.
+            torrent.RdId = id;
         }
         finally
         {
             RealDebridUpdateLock.Release();
+        }
+
+        if (torBoxCachedBeforeAdd && await TryCreateTorBoxCachedDownloads(torrent, torBoxProviderId))
+        {
+            ProviderUpdater.RequestWarmPoll();
+            return;
         }
 
         // UpdateTorrentClientData moved outside the lock — it's another HTTP round-trip
@@ -423,6 +445,114 @@ public class Torrents(
         }
 
         ProviderUpdater.RequestWarmPoll();
+    }
+
+    // Hard ceiling on the pre-add availability check. The fast-path optimisation is
+    // only worth taking if the call completes well within the cost of one normal
+    // poll cycle; otherwise we'd be lengthening every Add to chase a sometimes-faster
+    // outcome. 2 s is enough for a healthy TorBox call (~200-400 ms p50) plus retries.
+    private static readonly TimeSpan TorBoxAvailabilityProbeTimeout = TimeSpan.FromSeconds(2);
+
+    private async Task<Boolean> IsTorBoxCachedBeforeAdd(Torrent torrent)
+    {
+        if (!IsTorBoxTorrentMagnet(torrent))
+        {
+            return false;
+        }
+
+        using var cts = new CancellationTokenSource(TorBoxAvailabilityProbeTimeout);
+
+        try
+        {
+            var probe = torBoxDebridClient.IsTorrentAvailable(torrent.Hash);
+            var timeout = Task.Delay(Timeout.InfiniteTimeSpan, cts.Token);
+            var winner = await Task.WhenAny(probe, timeout);
+
+            if (winner == probe)
+            {
+                return await probe;
+            }
+
+            logger.LogWarning("TorBox availability pre-check timed out after {Timeout}s for {Hash}; falling back to normal provider polling", TorBoxAvailabilityProbeTimeout.TotalSeconds, torrent.Hash);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "TorBox availability pre-check failed for {Hash}; falling back to normal provider polling", torrent.Hash);
+            return false;
+        }
+    }
+
+    private Boolean IsTorBoxTorrentMagnet(Torrent torrent)
+    {
+        return Settings.Get.Provider.Provider == Provider.TorBox &&
+               torrent.Type == DownloadType.Torrent &&
+               !torrent.IsFile &&
+               !String.IsNullOrWhiteSpace(torrent.FileOrMagnet);
+    }
+
+    private async Task<Boolean> TryCreateTorBoxCachedDownloads(Torrent torrent, Int32? torBoxProviderId)
+    {
+        if (torBoxProviderId == null)
+        {
+            return false;
+        }
+
+        try
+        {
+            var rdTorrent = await torBoxDebridClient.GetTorrentByProviderId(torBoxProviderId.Value);
+
+            if (rdTorrent == null)
+            {
+                return false;
+            }
+
+            await UpdateTorrentClientData(torrent, rdTorrent);
+
+            // One GetById, threaded through the function. Each call does an
+            // AsNoTracking + Include(m => m.Downloads) round-trip to SQLite, and during
+            // an Add burst these serialize against WebsocketsUpdater's torrents.Get()
+            // through the SQLite writer lock. The previous version of this method ran
+            // GetById twice, which was visible as occasional jank on the dashboard.
+            var refreshed = await GetById(torrent.TorrentId);
+
+            if (refreshed is { RdStatus: TorrentStatus.Finished, Downloads.Count: 0, HostDownloadAction: TorrentHostDownloadAction.DownloadAll } &&
+                refreshed.Files.Count == 0 &&
+                refreshed.DownloadClient != Data.Enums.DownloadClient.Symlink &&
+                Settings.Get.Provider.PreferZippedDownloads)
+            {
+                var addResult = await downloads.TryAddForTorrent(refreshed.TorrentId, torBoxDebridClient.CreateZipDownloadInfo(torBoxProviderId.Value, refreshed.RdName));
+
+                return addResult is DownloadAddResult.Added or DownloadAddResult.AlreadyExists;
+            }
+
+            if (refreshed is not { RdStatus: TorrentStatus.Finished, Downloads.Count: 0 } || refreshed.FilesSelected != null)
+            {
+                return false;
+            }
+
+            await SelectFiles(refreshed.TorrentId);
+            await UpdateFilesSelected(refreshed.TorrentId, DateTimeOffset.UtcNow);
+
+            // Re-read once after the mutating SelectFiles / UpdateFilesSelected calls.
+            // We need fresh state for the CreateDownloads gate; the cost is the same as
+            // the original implementation.
+            refreshed = await GetById(torrent.TorrentId);
+
+            if (refreshed is { RdStatus: TorrentStatus.Finished, Downloads.Count: 0, FilesSelected: not null, HostDownloadAction: TorrentHostDownloadAction.DownloadAll })
+            {
+                await CreateDownloads(refreshed.TorrentId);
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            // Promoted from LogDebug. With Information-level production logging, the
+            // previous setting meant a silently-failing fast path was invisible.
+            logger.LogWarning(ex, "TorBox cached fast path failed for {Hash}; falling back to normal provider polling", torrent.Hash);
+            return false;
+        }
     }
 
     public async Task<IList<DebridClientAvailableFile>> GetAvailableFiles(String hash)

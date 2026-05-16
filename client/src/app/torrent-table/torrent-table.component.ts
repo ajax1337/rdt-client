@@ -456,6 +456,18 @@ export class TorrentTableComponent implements OnInit, OnDestroy {
   }
 
   public progressPercent(torrent: Torrent): number {
+    // Prefer the server-computed local-download progress when it's available. The server
+    // computes it from the same per-download view used to build the status text, so the
+    // bar and the pill can never disagree. Fall back to provider rdProgress when there
+    // are no local downloads yet (e.g. while the torrent is still queued at the provider).
+    const localProgress = torrent.localProgress;
+    if (localProgress != null) {
+      const n = Number(localProgress);
+      if (!Number.isNaN(n)) {
+        return Math.min(100, Math.max(0, n));
+      }
+    }
+
     const p = Number(torrent.rdProgress ?? 0);
     if (Number.isNaN(p)) return 0;
     return Math.min(100, Math.max(0, p));
