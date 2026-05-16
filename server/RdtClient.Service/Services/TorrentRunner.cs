@@ -21,6 +21,15 @@ public class TorrentRunner(
 {
     public static readonly ConcurrentDictionary<Guid, DownloadClient> ActiveDownloadClients = new();
     public static readonly ConcurrentDictionary<Guid, UnpackClient> ActiveUnpackClients = new();
+
+    // Last positive BytesTotal we observed for each download. Once a download finishes
+    // and is removed from ActiveDownloadClients, we still need its size to compute a
+    // byte-weighted overall progress for the torrent — without this cache, finished
+    // downloads contributed 0 / 0 to the math and a sibling that was mid-flight could
+    // briefly drive the bar to 100%. Grows with throughput but each entry is 24 bytes
+    // (Guid + Int64), and a download row is permanent until the user deletes the
+    // torrent; the same caller is responsible for evicting on delete.
+    private static readonly ConcurrentDictionary<Guid, Int64> KnownDownloadSize = new();
     private DateTimeOffset? _lastNextAllowedAt;
 
     public static Boolean IsPausedForLowDiskSpace { get; set; }
@@ -29,6 +38,13 @@ public class TorrentRunner(
     {
         if (ActiveDownloadClients.TryGetValue(downloadId, out var downloadClient))
         {
+            if (downloadClient.BytesTotal > 0)
+            {
+                // Capture the live size so we can still report it after the download
+                // is removed from the active dictionary on completion.
+                KnownDownloadSize[downloadId] = downloadClient.BytesTotal;
+            }
+
             return (downloadClient.Speed, downloadClient.BytesTotal, downloadClient.BytesDone);
         }
 
@@ -37,7 +53,24 @@ public class TorrentRunner(
             return (0, 100, unpackClient.Progess);
         }
 
+        if (KnownDownloadSize.TryGetValue(downloadId, out var size))
+        {
+            // No active downloader but we know the size — the download is finished.
+            // Report it as fully done so byte-weighted aggregation in TorrentDtoMapper
+            // counts it correctly toward the torrent's overall progress.
+            return (0, size, size);
+        }
+
         return (0, 0, 0);
+    }
+
+    /// <summary>
+    /// Drop the cached size for a download. Call from the delete path so the cache
+    /// doesn't accumulate entries for torrents the user has removed.
+    /// </summary>
+    public static void ForgetDownloadSize(Guid downloadId)
+    {
+        KnownDownloadSize.TryRemove(downloadId, out _);
     }
 
     public async Task Initialize()

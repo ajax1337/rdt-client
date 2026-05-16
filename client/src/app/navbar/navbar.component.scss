@@ -145,9 +145,13 @@
 .navbar-trailing {
   display: flex;
   align-items: center;
+  gap: 0.6rem;
   margin-left: auto;
   padding-left: 0.75rem;
 }
+
+// .connection-dot / .visually-hidden styles live in global styles.scss to stay
+// under the 4 KB per-component style budget.
 
 .account-dropdown { position: relative; }
 // .account-dropdown__menu / __item / __sep live in global styles.scss to keep

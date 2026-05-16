@@ -37,6 +37,23 @@
     </div>
 
     <div class="navbar-trailing">
+      <span
+        class="connection-dot"
+        [ngClass]="'connection-dot--' + connectionState"
+        [attr.title]="
+          connectionState === 'connected'
+            ? 'Live updates connected'
+            : connectionState === 'reconnecting'
+              ? 'Reconnecting to live updates'
+              : connectionState === 'disconnected'
+                ? 'Live updates disconnected'
+                : 'Connecting…'
+        "
+        aria-live="polite"
+      >
+        <span class="connection-dot__pip" aria-hidden="true"></span>
+        <span class="visually-hidden">Connection: {{ connectionState }}</span>
+      </span>
       <div class="account-dropdown" (click)="$event.stopPropagation()">
         <button
           type="button"

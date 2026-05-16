@@ -588,3 +588,43 @@ td .status-pill {
   background: #222a3a;
   margin: 0.3rem 0.15rem;
 }
+
+// SignalR connection-state indicator in the navbar. Lives here rather than in
+// navbar.component.scss to keep that file under its 4 KB component-style budget.
+.connection-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 0.9rem;
+  height: 0.9rem;
+
+  &__pip {
+    width: 0.55rem;
+    height: 0.55rem;
+    border-radius: 50%;
+    background: #6b7280;
+    transition: background 200ms ease;
+  }
+
+  &--connecting   .connection-dot__pip { background: #9ca3af; }
+  &--connected    .connection-dot__pip { background: #22c55e; box-shadow: 0 0 8px rgba(34, 197, 94, 0.45); }
+  &--reconnecting .connection-dot__pip { background: #f59e0b; animation: connection-dot-pulse 1s infinite; }
+  &--disconnected .connection-dot__pip { background: #ef4444; }
+}
+
+@keyframes connection-dot-pulse {
+  0%, 100% { opacity: 0.4; }
+  50%      { opacity: 1; }
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

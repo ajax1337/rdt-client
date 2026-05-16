@@ -420,6 +420,23 @@ export class TorrentTableComponent implements OnInit, OnDestroy {
     if (downloads.some((d) => d.error && d.completed == null)) {
       return 'retrying';
     }
+
+    // Local-state precedence over provider state. A TorBox cached torrent has
+    // rdStatus=Finished as soon as it lands on the provider, even while aria2 is
+    // still pulling the actual bytes locally. Without this gate, such a torrent
+    // shows up under the "Finished" KPI counter and the "Active" counter reads 0
+    // despite a live download running. Check the local downloads collection first.
+    if (downloads.length > 0) {
+      const anyDownloading = downloads.some((d) => d.downloadStarted != null && d.downloadFinished == null);
+      if (anyDownloading) {
+        return 'downloading';
+      }
+      const allFinished = downloads.every((d) => d.completed != null);
+      if (allFinished) {
+        return 'finished';
+      }
+    }
+
     // Optimistic "sending" while the dequeue HTTP call to the provider is in flight.
     // Gate on: no provider id yet + queued/unset status + freshly added.
     if (!torrent.rdId && (torrent.rdStatus === 0 || torrent.rdStatus == null) && this.isFreshlyAdded(torrent)) {

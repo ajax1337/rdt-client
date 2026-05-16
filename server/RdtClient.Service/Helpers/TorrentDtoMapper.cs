@@ -129,15 +129,23 @@ public static class TorrentDtoMapper
             var allFinished = true;
             var downloadingCount = 0;
             var downloadedCount = 0;
-            Int64 downloadingBytesDone = 0;
-            Int64 downloadingBytesTotal = 0;
             var unpackingCount = 0;
             var unpackedCount = 0;
-            Int64 unpackingBytesDone = 0;
-            Int64 unpackingBytesTotal = 0;
             var queuedForUnpackingCount = 0;
             var queuedForDownloadingCount = 0;
-            Double progressUnits = 0d;
+
+            // Byte-weighted aggregation across the whole torrent. A finished download
+            // contributes its full size to both numerator and denominator; an in-flight
+            // download contributes its live bytesDone/bytesTotal; a queued download
+            // contributes its size (when known) to the denominator only. TorrentRunner's
+            // KnownDownloadSize cache makes the size visible even after a download has
+            // been removed from ActiveDownloadClients on completion, so the math doesn't
+            // collapse when one sibling has finished and another is still pulling.
+            Int64 totalBytesDone = 0;
+            Int64 totalBytesTotal = 0;
+            var anyKnownSize = false;
+            var anyMissingSize = false;
+            var fileCountUnits = 0d;
 
             foreach (var download in torrent.Downloads)
             {
@@ -151,19 +159,49 @@ public static class TorrentDtoMapper
                 if (download.DownloadFinished != null)
                 {
                     downloadedCount += 1;
-                    progressUnits += 1d;
+                    fileCountUnits += 1d;
+                    if (bytesTotal > 0)
+                    {
+                        totalBytesDone += bytesTotal;
+                        totalBytesTotal += bytesTotal;
+                        anyKnownSize = true;
+                    }
+                    else
+                    {
+                        anyMissingSize = true;
+                    }
                 }
                 else if (download.DownloadStarted != null)
                 {
                     // In-flight. We deliberately do NOT gate on bytesDone > 0 — a freshly
                     // started download briefly returns (0, 0, 0) from the live tracker
                     // between aria2 chunks, and that 0-byte window used to flip the
-                    // status text into "Queued for downloading" and the bar into 100%
-                    // (because the only contributors were the completed siblings).
+                    // status text into "Queued for downloading".
                     downloadingCount += 1;
-                    downloadingBytesDone += bytesDone;
-                    downloadingBytesTotal += bytesTotal;
-                    progressUnits += bytesTotal > 0 ? Math.Clamp((Double)bytesDone / bytesTotal, 0d, 1d) : 0d;
+                    if (bytesTotal > 0)
+                    {
+                        totalBytesDone += Math.Min(bytesDone, bytesTotal);
+                        totalBytesTotal += bytesTotal;
+                        anyKnownSize = true;
+                        fileCountUnits += Math.Clamp((Double)bytesDone / bytesTotal, 0d, 1d);
+                    }
+                    else
+                    {
+                        anyMissingSize = true;
+                    }
+                }
+                else
+                {
+                    // Queued — contribute to denominator only when we have a size.
+                    if (bytesTotal > 0)
+                    {
+                        totalBytesTotal += bytesTotal;
+                        anyKnownSize = true;
+                    }
+                    else
+                    {
+                        anyMissingSize = true;
+                    }
                 }
 
                 if (download.UnpackingFinished != null)
@@ -173,8 +211,6 @@ public static class TorrentDtoMapper
                 else if (download.UnpackingStarted != null)
                 {
                     unpackingCount += 1;
-                    unpackingBytesDone += bytesDone;
-                    unpackingBytesTotal += bytesTotal;
                 }
 
                 if (download.UnpackingQueued != null && download.UnpackingStarted == null)
@@ -188,11 +224,20 @@ public static class TorrentDtoMapper
                 }
             }
 
-            // File-count weighted: each download counts as one unit, completed = 1,
-            // in-flight = bytesDone/bytesTotal (0 if size not yet known), queued = 0.
-            // This is monotone within a torrent's lifetime and immune to the 0-byte
-            // tracker window that breaks byte-weighted math.
-            var localProgress = (Int64)Math.Round(Math.Clamp(progressUnits / torrent.Downloads.Count * 100d, 0d, 100d));
+            // Pick the metric that has stable inputs. Byte-weighted is preferred — it's
+            // what users intuitively expect ("the .nfo shouldn't count as 50% of a 24 GB
+            // torrent"). Fall back to file-count when we have no size info anywhere, or
+            // when at least one download has unknown size — file-count is monotone and
+            // doesn't lie during the (0,0,0) tracker window.
+            Int64 localProgress;
+            if (anyKnownSize && !anyMissingSize && totalBytesTotal > 0)
+            {
+                localProgress = (Int64)Math.Round(Math.Clamp((Double)totalBytesDone / totalBytesTotal * 100d, 0d, 100d));
+            }
+            else
+            {
+                localProgress = (Int64)Math.Round(Math.Clamp(fileCountUnits / torrent.Downloads.Count * 100d, 0d, 100d));
+            }
 
             if (allFinished)
             {
@@ -201,16 +246,15 @@ public static class TorrentDtoMapper
 
             if (downloadingCount > 0)
             {
-                var progress = downloadingBytesTotal == 0 ? 0 : (Double)downloadingBytesDone / downloadingBytesTotal * 100;
-
-                return ($"Downloading file {downloadingCount + downloadedCount}/{torrent.Downloads.Count} ({progress:0.00}%)", localProgress);
+                // Status text reports the same overall byte-weighted percent the bar
+                // shows. Previously this string carried the per-current-file percent,
+                // which disagreed with the bar whenever there were multiple files.
+                return ($"Downloading file {downloadingCount + downloadedCount}/{torrent.Downloads.Count} ({localProgress}%)", localProgress);
             }
 
             if (unpackingCount > 0)
             {
-                var progress = unpackingBytesTotal == 0 ? 0 : (Double)unpackingBytesDone / unpackingBytesTotal * 100;
-
-                return ($"Extracting file {unpackingCount + unpackedCount}/{torrent.Downloads.Count} ({progress:0.00}%)", localProgress);
+                return ($"Extracting file {unpackingCount + unpackedCount}/{torrent.Downloads.Count} ({localProgress}%)", localProgress);
             }
 
             if (queuedForUnpackingCount > 0)

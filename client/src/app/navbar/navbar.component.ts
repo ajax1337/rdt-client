@@ -4,6 +4,7 @@ import { NavigationEnd, Router, RouterLink, RouterLinkActive } from '@angular/ro
 import { AuthService } from '../auth.service';
 import { Profile } from '../models/profile.model';
 import { SettingsService } from '../settings.service';
+import { TorrentService, SignalRConnectionState } from '../torrent.service';
 import { NgClass, DatePipe } from '@angular/common';
 import { filter } from 'rxjs';
 
@@ -18,6 +19,7 @@ export class NavbarComponent implements OnInit {
   private destroyRef = inject(DestroyRef);
   private settingsService = inject(SettingsService);
   private authService = inject(AuthService);
+  private torrentService = inject(TorrentService);
   private router = inject(Router);
 
   public showMobileMenu = false;
@@ -26,6 +28,7 @@ export class NavbarComponent implements OnInit {
   public profile: Profile;
   public providerLink: string;
   public version: string;
+  public connectionState: SignalRConnectionState = this.torrentService.getConnectionState();
 
   constructor() {
     this.router.events
@@ -53,6 +56,12 @@ export class NavbarComponent implements OnInit {
   }
 
   ngOnInit(): void {
+    this.torrentService.connectionState$
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((state) => {
+        this.connectionState = state;
+      });
+
     this.settingsService
       .getProfile()
       .pipe(takeUntilDestroyed(this.destroyRef))

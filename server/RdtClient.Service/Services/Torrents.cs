@@ -691,6 +691,9 @@ public class Torrents(
                     break;
                 }
             }
+
+            // Evict from the byte-size cache so it doesn't outlive the torrent row.
+            TorrentRunner.ForgetDownloadSize(download.DownloadId);
         }
 
         if (deleteData)

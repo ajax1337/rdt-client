@@ -79,10 +79,12 @@ public class TorrentDtoMapperTest
     }
 
     [Fact]
-    public void Maps_InFlightWithLiveBytes_StatusTextAndLocalProgressAgree()
+    public void Maps_InFlightWithLiveBytes_ByteWeighted_StatusAndBarAgree()
     {
-        // Two files: small one finished, big one mid-flight. This is the dashboard
-        // screenshot scenario that originally regressed.
+        // Two files: tiny .nfo finished (504 B, full size still reported by the
+        // KnownDownloadSize cache), and a 24 GB .mkv at 17.82%. This is the screenshot
+        // that prompted the byte-weighted switch — file-count weighting was reporting
+        // 59% on the bar while the badge said 17.82%, two views of the same state.
         var finished = Finished();
         var inFlight = Started();
 
@@ -90,23 +92,27 @@ public class TorrentDtoMapperTest
 
         var stats = StaticStats(new Dictionary<Guid, (Int64, Int64, Int64)>
         {
-            [inFlight.DownloadId] = (Speed: 100_000_000, BytesTotal: 24_000_000_000, BytesDone: 4_276_800_000) // 17.82%
+            // Finished download: simulates TorrentRunner.KnownDownloadSize returning
+            // (0, size, size) after the live downloader was removed.
+            [finished.DownloadId] = (Speed: 0, BytesTotal: 504, BytesDone: 504),
+            [inFlight.DownloadId] = (Speed: 100_000_000, BytesTotal: 24_000_000_000, BytesDone: 4_276_800_000) // 17.82% of the mkv
         });
 
         var dto = TorrentDtoMapper.ToUpdateDto(torrent, stats);
 
-        // File-count weighted: (1.0 + 0.1782) / 2 = 0.5891 → 59
-        Assert.Equal(59, dto.LocalProgress);
-        Assert.Equal("Downloading file 2/2 (17.82%)", dto.StatusText);
+        // (504 + 4_276_800_000) / (504 + 24_000_000_000) ≈ 17.82% → 18
+        Assert.Equal(18, dto.LocalProgress);
+        // Status text now mirrors the bar — single overall percent, no per-file drift.
+        Assert.Equal("Downloading file 2/2 (18%)", dto.StatusText);
     }
 
     [Fact]
-    public void Maps_InFlightWithZeroByteTrackerWindow_StatusStillDownloading_LocalProgressIsHalf()
+    public void Maps_InFlightWithZeroByteTrackerWindow_FallsBackToFileCount()
     {
-        // Regression: aria2 has started but hasn't fired its first progress event.
-        // getDownloadStats returns (0,0,0). The old code would (a) drop the download
-        // out of the "downloading" branch and flip to "Queued for downloading", and
-        // (b) cause the frontend bar to show 100% (the completed sibling dominated).
+        // Regression: aria2 has started but hasn't fired its first progress event,
+        // and the finished sibling isn't in the KnownDownloadSize cache yet either.
+        // Without the size info we cannot do byte-weighted math safely (the cached
+        // .nfo would dominate and drive the bar to 100%). Fall back to file-count.
         var finished = Finished();
         var startedNoBytes = Started();
 
@@ -116,6 +122,31 @@ public class TorrentDtoMapperTest
 
         Assert.StartsWith("Downloading file 2/2", dto.StatusText);
         // (1.0 + 0.0) / 2 = 0.5 → 50
+        Assert.Equal(50, dto.LocalProgress);
+    }
+
+    [Fact]
+    public void Maps_FinishedSiblingDominantWithoutSize_DoesNotBlipTo100()
+    {
+        // This is the failure mode that byte-weighted math could produce: one sibling
+        // finished with a known size, the other in-flight without any size info yet.
+        // Naive byte-weighting would compute (smallSize / smallSize) = 100% during the
+        // window before the in-flight sibling's first progress event. The fallback to
+        // file-count when any size is missing prevents that.
+        var finished = Finished();
+        var startedNoBytes = Started();
+
+        var torrent = NewTorrent(finished, startedNoBytes);
+
+        var stats = StaticStats(new Dictionary<Guid, (Int64, Int64, Int64)>
+        {
+            [finished.DownloadId] = (Speed: 0, BytesTotal: 504, BytesDone: 504)
+            // startedNoBytes is intentionally missing — simulates the (0,0,0) window
+        });
+
+        var dto = TorrentDtoMapper.ToUpdateDto(torrent, stats);
+
+        // File-count fallback: (1.0 + 0.0) / 2 = 50, NOT 100.
         Assert.Equal(50, dto.LocalProgress);
     }
 
