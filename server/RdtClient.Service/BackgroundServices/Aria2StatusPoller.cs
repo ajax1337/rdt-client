@@ -41,26 +41,26 @@ public class Aria2StatusPoller(ILogger<Aria2StatusPoller> logger, IHttpClientFac
     // Number of consecutive timeouts before we move to the slow-poll cadence.
     private const Int32 SlowPollThreshold = 3;
 
-    // Holds the in-flight TellAllAsync task so we don't pile up parallel RPCs when
-    // aria2 is consistently slow. We ALWAYS reuse this if non-null, even when it has
-    // completed — gating on `IsCompleted == false` would discard slow-but-successful
-    // results that land between cycles (very common under the 5 s slow-poll cadence).
-    private Task<IList<DownloadStatusResult>>? _inFlight;
+    // Holds the in-flight TellAllAsync plus when it was issued. The timestamp is the
+    // discriminator for stale-snapshot handling: an Update can apply this snapshot to
+    // a downloader only when the snapshot was *started* after that downloader's
+    // current gid was observed (so missing-from-snapshot is meaningfully "aria2 lost
+    // the download" rather than "snapshot is from before this gid registered").
+    private InFlight? _inFlight;
 
-    // Per-downloader record of whether we have ever seen this downloader's gid in a
-    // successful snapshot. Used to filter the fanout: a snapshot that doesn't include
-    // a never-seen-before downloader's gid is treated as "the downloader hadn't
-    // registered yet when this snapshot was taken" rather than "aria2 has lost the
-    // download". Prevents the spurious "Download was not found in Aria2" event when
-    // a TellAll hangs across an A-completes-B-starts transition.
-    private readonly ConcurrentDictionary<Guid, Byte> _seenInSnapshot = new();
+    // First time we observed (DownloadId, Gid) together. Keyed by (id, gid) rather
+    // than just id so a downloader that retries and gets a new aria2 gid doesn't
+    // inherit the old gid's observation timestamp. Cleaned up at end of each cycle
+    // for downloaders / gids no longer present in the active set.
+    private readonly ConcurrentDictionary<(Guid DownloadId, String Gid), DateTime> _firstObservedGidAt = new();
 
-    // Per-downloader in-flight guard for Update(). The per-call budget (above) only
-    // bounds how long the poller WAITS for an Update; SafeUpdate itself keeps running
-    // in the background after we abandon it. Without this guard, a subsequent cycle
-    // would issue a parallel Update on the same Aria2cDownloader, causing duplicate
-    // Remove() RPCs and duplicate complete/error event emissions during the worst
-    // case (a download in the file-visibility retry loop).
+    // Per-downloader in-flight guard for Update(). The per-call budget only bounds
+    // how long the poller WAITS for an Update; SafeUpdate itself keeps running after
+    // we abandon waiting. Without this guard a subsequent cycle would issue a
+    // parallel Update on the same Aria2cDownloader, causing duplicate Remove() RPCs
+    // and duplicate complete/error event emissions during the worst case (a download
+    // in the file-visibility retry loop). Released via ContinueWith on the actual
+    // SafeUpdate completion, NOT on the WhenAny race.
     private readonly ConcurrentDictionary<Guid, Byte> _updateInFlight = new();
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -76,8 +76,6 @@ public class Aria2StatusPoller(ILogger<Aria2StatusPoller> logger, IHttpClientFac
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            // Snapshot the active aria2 downloader set into a list so the rest of the
-            // cycle sees a consistent view (ActiveDownloadClients may mutate concurrently).
             var aria2Downloaders = TorrentRunner.ActiveDownloadClients
                 .Where(m => m.Value.Type == Data.Enums.DownloadClient.Aria2c)
                 .Select(m => (DownloadId: m.Key, Downloader: m.Value.Downloader as Aria2cDownloader))
@@ -100,21 +98,30 @@ public class Aria2StatusPoller(ILogger<Aria2StatusPoller> logger, IHttpClientFac
             else
             {
                 consecutiveTimeouts = 0;
-                // Drop any pending TellAll — its result would be applied to a future
-                // session against gids it never knew about. (The orphaned task continues
-                // until aria2 finally answers, then is GC'd.)
+
+                // Drop the pending TellAll. The snapshot's StartedAt won't match
+                // anything in a future session and the orphan task continues to GC.
                 _inFlight = null;
             }
 
-            // Prune the seen-in-snapshot map so we don't leak entries for deleted
-            // downloads. Keep only entries whose downloadId is still in the active set.
-            // O(n) per cycle but n is tiny (a handful of active downloads).
-            var activeIds = new HashSet<Guid>(aria2Downloaders.Select(d => d.DownloadId));
-            foreach (var key in _seenInSnapshot.Keys)
+            // Prune _firstObservedGidAt of entries whose (DownloadId, Gid) no longer
+            // exists in the active set — covers both deleted downloads and gid
+            // rotations (Aria2cDownloader retries that produce a new gid).
+            var currentKeys = new HashSet<(Guid, String)>();
+            foreach (var (id, downloader) in aria2Downloaders)
             {
-                if (!activeIds.Contains(key))
+                var gid = downloader?.Gid;
+                if (gid != null)
                 {
-                    _seenInSnapshot.TryRemove(key, out _);
+                    currentKeys.Add((id, gid));
+                }
+            }
+
+            foreach (var key in _firstObservedGidAt.Keys)
+            {
+                if (!currentKeys.Contains(key))
+                {
+                    _firstObservedGidAt.TryRemove(key, out _);
                 }
             }
 
@@ -129,12 +136,25 @@ public class Aria2StatusPoller(ILogger<Aria2StatusPoller> logger, IHttpClientFac
         IReadOnlyList<(Guid DownloadId, Aria2cDownloader? Downloader)> aria2Downloaders,
         CancellationToken stoppingToken)
     {
-        Task<IList<DownloadStatusResult>> taskToWait;
+        // Record the first time we observe each (DownloadId, Gid) pair. Do this
+        // BEFORE waiting on TellAll so even brand-new downloaders get a timestamp
+        // immediately; if TellAll was issued before this moment, the snapshot is
+        // older than this gid and we'll skip applying it.
+        foreach (var (downloadId, downloader) in aria2Downloaders)
+        {
+            var gid = downloader!.Gid;
+            if (gid != null)
+            {
+                _firstObservedGidAt.GetOrAdd((downloadId, gid), _ => DateTime.UtcNow);
+            }
+        }
+
+        InFlight inFlight;
         var startedNewCall = false;
 
         if (_inFlight is not null)
         {
-            taskToWait = _inFlight;
+            inFlight = _inFlight;
         }
         else
         {
@@ -143,15 +163,15 @@ public class Aria2StatusPoller(ILogger<Aria2StatusPoller> logger, IHttpClientFac
 
             var aria2 = new Aria2NetClient(Settings.Get.DownloadClient.Aria2cUrl, Settings.Get.DownloadClient.Aria2cSecret, httpClient, 1);
 
-            taskToWait = aria2.TellAllAsync();
-            _inFlight = taskToWait;
+            inFlight = new InFlight(aria2.TellAllAsync(), DateTime.UtcNow);
+            _inFlight = inFlight;
             startedNewCall = true;
         }
 
         var timeoutTask = Task.Delay(TellAllRpcTimeout, stoppingToken);
-        var winner = await Task.WhenAny(taskToWait, timeoutTask);
+        var winner = await Task.WhenAny(inFlight.Task, timeoutTask);
 
-        if (winner != taskToWait)
+        if (winner != inFlight.Task)
         {
             if (startedNewCall)
             {
@@ -166,7 +186,7 @@ public class Aria2StatusPoller(ILogger<Aria2StatusPoller> logger, IHttpClientFac
 
         try
         {
-            allDownloads = await taskToWait;
+            allDownloads = await inFlight.Task;
         }
         catch (Exception ex)
         {
@@ -174,7 +194,7 @@ public class Aria2StatusPoller(ILogger<Aria2StatusPoller> logger, IHttpClientFac
         }
         finally
         {
-            if (ReferenceEquals(_inFlight, taskToWait))
+            if (ReferenceEquals(_inFlight, inFlight))
             {
                 _inFlight = null;
             }
@@ -185,14 +205,13 @@ public class Aria2StatusPoller(ILogger<Aria2StatusPoller> logger, IHttpClientFac
             return PollOutcome.Faulted;
         }
 
-        // Build a gid set so we can do O(1) presence checks per downloader.
         var snapshotGids = new HashSet<String>(allDownloads.Where(d => d.Gid is not null).Select(d => d.Gid!));
 
-        // Fan out to every aria2 downloader, but only when applying the snapshot is
-        // safe (see _seenInSnapshot comment). Each per-downloader Update runs in its
-        // own Task under a per-call budget AND a per-downloader in-flight guard so
-        // neither one slow Update stalls the rest, nor parallel Updates pile up on
-        // the same Aria2cDownloader.
+        // Fan out to every aria2 downloader. For each, decide whether THIS snapshot
+        // is safe to apply by comparing the snapshot's start time to when we first
+        // observed the downloader's current gid. The legitimate "aria2 lost the
+        // download" detection still fires when the snapshot is post-gid; only when
+        // it's pre-gid do we skip.
         var updateTasks = new List<Task>();
 
         foreach (var (downloadId, downloaderRef) in aria2Downloaders)
@@ -202,34 +221,28 @@ public class Aria2StatusPoller(ILogger<Aria2StatusPoller> logger, IHttpClientFac
 
             if (gid == null)
             {
-                // Downloader hasn't received its aria2 gid yet — there's nothing to
-                // correlate the snapshot against. Skip until the next cycle.
+                // Downloader hasn't received its aria2 gid yet — nothing to correlate.
                 continue;
             }
 
-            var presentInSnapshot = snapshotGids.Contains(gid);
-            var seenBefore = _seenInSnapshot.ContainsKey(downloadId);
-
-            if (presentInSnapshot)
+            if (snapshotGids.Contains(gid))
             {
-                // Record so future "missing" snapshots are interpreted as legitimate
-                // aria2-lost-the-download events rather than stale-snapshot artifacts.
-                _seenInSnapshot[downloadId] = 0;
-            }
-            else if (!seenBefore)
-            {
-                // Never seen this downloader's gid in any snapshot. Either the
-                // snapshot was taken before the gid registered with aria2, or this
-                // downloader started after the snapshot was taken (e.g. A-finishes-
-                // B-starts during a slow TellAll). Skip — emitting "not found in
-                // Aria2" here would be spurious.
+                // Present in the snapshot — always safe to apply.
+                updateTasks.Add(RunUpdateWithBudget(downloader, downloadId, allDownloads));
                 continue;
             }
 
-            // Either present-now or seen-before. The seen-before path lets us surface
-            // the legitimate "aria2 lost the download" case (Update will emit "not
-            // found in Aria2" when its gid isn't in the snapshot list).
-            updateTasks.Add(RunUpdateWithBudget(downloader, downloadId, allDownloads));
+            // Missing from snapshot. Apply only if the snapshot was issued AFTER we
+            // observed this gid — otherwise the snapshot is from before the gid
+            // registered with aria2 and missing-ness is meaningless.
+            if (_firstObservedGidAt.TryGetValue((downloadId, gid), out var observedAt)
+                && inFlight.StartedAt >= observedAt)
+            {
+                updateTasks.Add(RunUpdateWithBudget(downloader, downloadId, allDownloads));
+            }
+            // else: snapshot pre-dates the gid, or we have no observation timestamp
+            // for this (id, gid) pair (the cleanup pruned it for a stale gid before
+            // we re-observed). Skip; next cycle will have fresh state.
         }
 
         if (updateTasks.Count > 0)
@@ -244,8 +257,9 @@ public class Aria2StatusPoller(ILogger<Aria2StatusPoller> logger, IHttpClientFac
     {
         // Per-downloader in-flight guard. If a previous cycle's Update is still
         // running (e.g. stuck in the file-visibility retry loop on completion), skip
-        // this cycle's Update for the same downloader. The previous one will clear
-        // the guard when it actually completes; the next cycle then issues fresh.
+        // this cycle's Update for the same downloader. Released via ContinueWith on
+        // the actual SafeUpdate task — NOT on the WhenAny race — so subsequent
+        // cycles wait for the previous Update to truly finish before issuing fresh.
         if (!_updateInFlight.TryAdd(downloadId, 0))
         {
             logger.LogDebug("Aria2cDownloader.Update for {DownloadId} is still in flight from a previous cycle — skipping this cycle's update.", downloadId);
@@ -254,10 +268,6 @@ public class Aria2StatusPoller(ILogger<Aria2StatusPoller> logger, IHttpClientFac
 
         var safeUpdateTask = SafeUpdate(aria2Downloader, downloadId, allDownloads);
 
-        // Schedule the guard release for whenever SafeUpdate actually finishes, not
-        // when we stop waiting on it. Crucial — without this the guard would be
-        // released at PerDownloaderUpdateTimeout and the next cycle could launch a
-        // parallel Update before the previous one finished.
         _ = safeUpdateTask.ContinueWith(prev => _updateInFlight.TryRemove(downloadId, out _), TaskScheduler.Default);
 
         var timeoutTask = Task.Delay(PerDownloaderUpdateTimeout);
@@ -281,6 +291,8 @@ public class Aria2StatusPoller(ILogger<Aria2StatusPoller> logger, IHttpClientFac
             logger.LogWarning(ex, "Aria2cDownloader.Update failed for {DownloadId}: {Message}", downloadId, ex.Message);
         }
     }
+
+    private sealed record InFlight(Task<IList<DownloadStatusResult>> Task, DateTime StartedAt);
 
     private enum PollOutcome
     {
