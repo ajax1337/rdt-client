@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Aria2NET;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -28,13 +29,13 @@ public class Aria2StatusPoller(ILogger<Aria2StatusPoller> logger, IHttpClientFac
     // poller refuses to wait more than this for any single response.
     private static readonly TimeSpan TellAllRpcTimeout = TimeSpan.FromSeconds(4);
 
-    // Per-downloader budget for the Update() fanout below. Aria2cDownloader.Update
-    // can call Remove() (two RPCs) and then poll for file visibility with
-    // Task.Delay(1000 * retryCount) for up to retry=10 — about 45 s on completion.
-    // Without this cap, one completing download could stall byte updates for every
-    // other active downloader in the same fanout. The budget is permissive enough to
-    // let normal updates finish (typically a few ms — an in-memory gid lookup plus an
-    // event invocation) while still preventing the worst case.
+    // Per-downloader budget for the Update() fanout. Aria2cDownloader.Update can call
+    // Remove() (two RPCs) and then poll for file visibility with Task.Delay(1000 *
+    // retryCount) for up to retry=10 — about 45 s on completion. Without this cap, one
+    // completing download could stall byte updates for every other active downloader
+    // in the same fanout. The cap is permissive enough to let normal updates finish
+    // (typically a few ms — an in-memory gid lookup plus an event invocation) while
+    // still preventing the worst case.
     private static readonly TimeSpan PerDownloaderUpdateTimeout = TimeSpan.FromSeconds(3);
 
     // Number of consecutive timeouts before we move to the slow-poll cadence.
@@ -44,14 +45,23 @@ public class Aria2StatusPoller(ILogger<Aria2StatusPoller> logger, IHttpClientFac
     // aria2 is consistently slow. We ALWAYS reuse this if non-null, even when it has
     // completed — gating on `IsCompleted == false` would discard slow-but-successful
     // results that land between cycles (very common under the 5 s slow-poll cadence).
-    // The reference is cleared after a result is consumed OR when the downloader set
-    // becomes empty (so a stale gid snapshot can't be applied to a new session).
     private Task<IList<DownloadStatusResult>>? _inFlight;
 
-    // Edge-trigger flag for the "had downloaders → have none" transition. Used to
-    // drop _inFlight exactly once on the transition so we don't apply a stale TellAll
-    // snapshot when a fresh download session starts.
-    private Boolean _previouslyHadDownloaders;
+    // Per-downloader record of whether we have ever seen this downloader's gid in a
+    // successful snapshot. Used to filter the fanout: a snapshot that doesn't include
+    // a never-seen-before downloader's gid is treated as "the downloader hadn't
+    // registered yet when this snapshot was taken" rather than "aria2 has lost the
+    // download". Prevents the spurious "Download was not found in Aria2" event when
+    // a TellAll hangs across an A-completes-B-starts transition.
+    private readonly ConcurrentDictionary<Guid, Byte> _seenInSnapshot = new();
+
+    // Per-downloader in-flight guard for Update(). The per-call budget (above) only
+    // bounds how long the poller WAITS for an Update; SafeUpdate itself keeps running
+    // in the background after we abandon it. Without this guard, a subsequent cycle
+    // would issue a parallel Update on the same Aria2cDownloader, causing duplicate
+    // Remove() RPCs and duplicate complete/error event emissions during the worst
+    // case (a download in the file-visibility retry loop).
+    private readonly ConcurrentDictionary<Guid, Byte> _updateInFlight = new();
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -66,14 +76,17 @@ public class Aria2StatusPoller(ILogger<Aria2StatusPoller> logger, IHttpClientFac
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            var hasAria2Downloaders = TorrentRunner.ActiveDownloadClients
-                .Any(m => m.Value.Type == Data.Enums.DownloadClient.Aria2c);
+            // Snapshot the active aria2 downloader set into a list so the rest of the
+            // cycle sees a consistent view (ActiveDownloadClients may mutate concurrently).
+            var aria2Downloaders = TorrentRunner.ActiveDownloadClients
+                .Where(m => m.Value.Type == Data.Enums.DownloadClient.Aria2c)
+                .Select(m => (DownloadId: m.Key, Downloader: m.Value.Downloader as Aria2cDownloader))
+                .Where(x => x.Downloader is not null)
+                .ToList();
 
-            if (hasAria2Downloaders)
+            if (aria2Downloaders.Count > 0)
             {
-                _previouslyHadDownloaders = true;
-
-                var outcome = await PollOnce(stoppingToken);
+                var outcome = await PollOnce(aria2Downloaders, stoppingToken);
 
                 if (outcome == PollOutcome.Timeout || outcome == PollOutcome.Faulted)
                 {
@@ -86,19 +99,23 @@ public class Aria2StatusPoller(ILogger<Aria2StatusPoller> logger, IHttpClientFac
             }
             else
             {
-                if (_previouslyHadDownloaders)
-                {
-                    // Drop the pending TellAll. The orphaned task continues in the
-                    // background until aria2 finally responds, and is then GC'd.
-                    // Applying its result to a future session would cause
-                    // Aria2cDownloader.Update to falsely report "Download was not
-                    // found in Aria2" for downloads whose gids weren't captured in
-                    // the stale snapshot.
-                    _inFlight = null;
-                    _previouslyHadDownloaders = false;
-                }
-
                 consecutiveTimeouts = 0;
+                // Drop any pending TellAll — its result would be applied to a future
+                // session against gids it never knew about. (The orphaned task continues
+                // until aria2 finally answers, then is GC'd.)
+                _inFlight = null;
+            }
+
+            // Prune the seen-in-snapshot map so we don't leak entries for deleted
+            // downloads. Keep only entries whose downloadId is still in the active set.
+            // O(n) per cycle but n is tiny (a handful of active downloads).
+            var activeIds = new HashSet<Guid>(aria2Downloaders.Select(d => d.DownloadId));
+            foreach (var key in _seenInSnapshot.Keys)
+            {
+                if (!activeIds.Contains(key))
+                {
+                    _seenInSnapshot.TryRemove(key, out _);
+                }
             }
 
             var delay = consecutiveTimeouts >= SlowPollThreshold ? SlowPollInterval : HealthyPollInterval;
@@ -108,17 +125,15 @@ public class Aria2StatusPoller(ILogger<Aria2StatusPoller> logger, IHttpClientFac
         logger.LogInformation("Aria2StatusPoller stopped.");
     }
 
-    private async Task<PollOutcome> PollOnce(CancellationToken stoppingToken)
+    private async Task<PollOutcome> PollOnce(
+        IReadOnlyList<(Guid DownloadId, Aria2cDownloader? Downloader)> aria2Downloaders,
+        CancellationToken stoppingToken)
     {
         Task<IList<DownloadStatusResult>> taskToWait;
         var startedNewCall = false;
 
         if (_inFlight is not null)
         {
-            // Reuse even when IsCompleted. A completed task's await returns
-            // immediately so this is free in the happy path, and it ensures we don't
-            // throw away a slow-but-successful response that arrived after the
-            // previous cycle's timeout but before this cycle's start.
             taskToWait = _inFlight;
         }
         else
@@ -140,7 +155,7 @@ public class Aria2StatusPoller(ILogger<Aria2StatusPoller> logger, IHttpClientFac
         {
             if (startedNewCall)
             {
-                logger.LogWarning("Aria2 TellAll RPC did not respond within {Budget}ms — will retry next cycle. The call continues in the background; this is harmless and the next cycle will reuse it.",
+                logger.LogWarning("Aria2 TellAll RPC did not respond within {Budget}ms — will retry next cycle. The call continues in the background; the next cycle will reuse it.",
                     TellAllRpcTimeout.TotalMilliseconds);
             }
 
@@ -170,22 +185,51 @@ public class Aria2StatusPoller(ILogger<Aria2StatusPoller> logger, IHttpClientFac
             return PollOutcome.Faulted;
         }
 
-        // Fan out to every active aria2 downloader so their in-memory BytesDone /
-        // BytesTotal / Speed reflect the latest RPC snapshot. TorrentRunner.Tick and
-        // TorrentDtoMapper read these via TorrentRunner.GetStats.
-        //
-        // Each per-downloader Update runs in its own Task with a per-call budget so
-        // one stuck Update (e.g. a completing download spinning in the file-visibility
-        // retry loop in Aria2cDownloader.Update) doesn't stall byte updates for every
-        // other active downloader.
+        // Build a gid set so we can do O(1) presence checks per downloader.
+        var snapshotGids = new HashSet<String>(allDownloads.Where(d => d.Gid is not null).Select(d => d.Gid!));
+
+        // Fan out to every aria2 downloader, but only when applying the snapshot is
+        // safe (see _seenInSnapshot comment). Each per-downloader Update runs in its
+        // own Task under a per-call budget AND a per-downloader in-flight guard so
+        // neither one slow Update stalls the rest, nor parallel Updates pile up on
+        // the same Aria2cDownloader.
         var updateTasks = new List<Task>();
 
-        foreach (var activeDownload in TorrentRunner.ActiveDownloadClients)
+        foreach (var (downloadId, downloaderRef) in aria2Downloaders)
         {
-            if (activeDownload.Value.Downloader is Aria2cDownloader aria2Downloader)
+            var downloader = downloaderRef!;
+            var gid = downloader.Gid;
+
+            if (gid == null)
             {
-                updateTasks.Add(RunUpdateWithBudget(aria2Downloader, activeDownload.Key, allDownloads));
+                // Downloader hasn't received its aria2 gid yet — there's nothing to
+                // correlate the snapshot against. Skip until the next cycle.
+                continue;
             }
+
+            var presentInSnapshot = snapshotGids.Contains(gid);
+            var seenBefore = _seenInSnapshot.ContainsKey(downloadId);
+
+            if (presentInSnapshot)
+            {
+                // Record so future "missing" snapshots are interpreted as legitimate
+                // aria2-lost-the-download events rather than stale-snapshot artifacts.
+                _seenInSnapshot[downloadId] = 0;
+            }
+            else if (!seenBefore)
+            {
+                // Never seen this downloader's gid in any snapshot. Either the
+                // snapshot was taken before the gid registered with aria2, or this
+                // downloader started after the snapshot was taken (e.g. A-finishes-
+                // B-starts during a slow TellAll). Skip — emitting "not found in
+                // Aria2" here would be spurious.
+                continue;
+            }
+
+            // Either present-now or seen-before. The seen-before path lets us surface
+            // the legitimate "aria2 lost the download" case (Update will emit "not
+            // found in Aria2" when its gid isn't in the snapshot list).
+            updateTasks.Add(RunUpdateWithBudget(downloader, downloadId, allDownloads));
         }
 
         if (updateTasks.Count > 0)
@@ -198,14 +242,30 @@ public class Aria2StatusPoller(ILogger<Aria2StatusPoller> logger, IHttpClientFac
 
     private async Task RunUpdateWithBudget(Aria2cDownloader aria2Downloader, Guid downloadId, IList<DownloadStatusResult> allDownloads)
     {
-        var updateTask = SafeUpdate(aria2Downloader, downloadId, allDownloads);
-        var timeoutTask = Task.Delay(PerDownloaderUpdateTimeout);
-
-        var winner = await Task.WhenAny(updateTask, timeoutTask);
-
-        if (winner != updateTask)
+        // Per-downloader in-flight guard. If a previous cycle's Update is still
+        // running (e.g. stuck in the file-visibility retry loop on completion), skip
+        // this cycle's Update for the same downloader. The previous one will clear
+        // the guard when it actually completes; the next cycle then issues fresh.
+        if (!_updateInFlight.TryAdd(downloadId, 0))
         {
-            logger.LogWarning("Aria2cDownloader.Update for {DownloadId} exceeded {Budget}ms — skipping this cycle. The call continues in the background.",
+            logger.LogDebug("Aria2cDownloader.Update for {DownloadId} is still in flight from a previous cycle — skipping this cycle's update.", downloadId);
+            return;
+        }
+
+        var safeUpdateTask = SafeUpdate(aria2Downloader, downloadId, allDownloads);
+
+        // Schedule the guard release for whenever SafeUpdate actually finishes, not
+        // when we stop waiting on it. Crucial — without this the guard would be
+        // released at PerDownloaderUpdateTimeout and the next cycle could launch a
+        // parallel Update before the previous one finished.
+        _ = safeUpdateTask.ContinueWith(prev => _updateInFlight.TryRemove(downloadId, out _), TaskScheduler.Default);
+
+        var timeoutTask = Task.Delay(PerDownloaderUpdateTimeout);
+        var winner = await Task.WhenAny(safeUpdateTask, timeoutTask);
+
+        if (winner != safeUpdateTask)
+        {
+            logger.LogWarning("Aria2cDownloader.Update for {DownloadId} exceeded {Budget}ms — leaving it running in the background; the per-downloader in-flight guard will keep subsequent cycles from issuing parallel Updates until it finishes.",
                 downloadId, PerDownloaderUpdateTimeout.TotalMilliseconds);
         }
     }

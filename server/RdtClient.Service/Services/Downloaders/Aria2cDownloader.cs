@@ -16,6 +16,16 @@ public class Aria2cDownloader : IDownloader
 
     private String? _gid;
 
+    /// <summary>
+    /// Exposes the current aria2c Gid for read-only consumers (the Aria2StatusPoller
+    /// uses it to filter the TellAll snapshot so a snapshot taken before this
+    /// downloader registered isn't applied to it, which would otherwise emit a
+    /// spurious "Download was not found in Aria2" event).
+    /// Null until the first successful AddUri completes; can briefly transition back
+    /// to null inside the retry loop in Download() when a previous Gid is invalidated.
+    /// </summary>
+    public String? Gid => _gid;
+
     public Aria2cDownloader(String? gid, String uri, String filePath, String downloadPath, String? category)
     {
         _logger = Log.ForContext<Aria2cDownloader>();
