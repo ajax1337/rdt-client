@@ -54,6 +54,7 @@ public static class DiConfig
         services.AddSingleton<IAuthorizationHandler, AuthSettingHandler>();
         services.AddScoped<IAuthorizationHandler, SabnzbdHandler>();
 
+        services.AddHostedService<Aria2StatusPoller>();
         services.AddHostedService<DiskSpaceMonitor>();
         services.AddHostedService<ProviderUpdater>();
         services.AddHostedService<Startup>();

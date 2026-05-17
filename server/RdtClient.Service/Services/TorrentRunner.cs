@@ -1,7 +1,6 @@
 ﻿using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
-using Aria2NET;
 using Microsoft.Extensions.Logging;
 using RdtClient.Data.Enums;
 using RdtClient.Data.Models.Data;
@@ -30,6 +29,7 @@ public class TorrentRunner(
     // (Guid + Int64), and a download row is permanent until the user deletes the
     // torrent; the same caller is responsible for evicting on delete.
     private static readonly ConcurrentDictionary<Guid, Int64> KnownDownloadSize = new();
+
     private DateTimeOffset? _lastNextAllowedAt;
 
     public static Boolean IsPausedForLowDiskSpace { get; set; }
@@ -179,31 +179,14 @@ public class TorrentRunner(
             Log($"TorrentRunner Tick Start, {ActiveDownloadClients.Count} active downloads, {ActiveUnpackClients.Count} active unpacks");
         }
 
-        if (ActiveDownloadClients.Any(m => m.Value.Type == Data.Enums.DownloadClient.Aria2c))
-        {
-            Log("Updating Aria2 status");
-
-            var httpClient = httpClientFactory.CreateClient();
-            // Patched: bumped from 10s to 60s so a saturated aria2c RPC doesn't
-            // crash TaskRunner on every tick.
-            httpClient.Timeout = TimeSpan.FromSeconds(60);
-
-            var aria2NetClient = new Aria2NetClient(Settings.Get.DownloadClient.Aria2cUrl, Settings.Get.DownloadClient.Aria2cSecret, httpClient, 1);
-
-            var allDownloads = await aria2NetClient.TellAllAsync();
-
-            Log($"Found {allDownloads.Count} Aria2 downloads");
-
-            foreach (var activeDownload in ActiveDownloadClients)
-            {
-                if (activeDownload.Value.Downloader is Aria2cDownloader aria2Downloader)
-                {
-                    await aria2Downloader.Update(allDownloads);
-                }
-            }
-
-            Log("Finished updating Aria2 status");
-        }
+        // Aria2 status polling lives in Aria2StatusPoller (a dedicated BackgroundService)
+        // rather than inline in this method. Previously a single slow TellAllAsync RPC
+        // (observed: 13-40 s under high-throughput downloads) blocked the entire Tick
+        // body, which in turn delayed dequeue, retry, completion, and deletion work and
+        // made the dashboard appear frozen. The poller has its own loop, its own
+        // per-call timeout, and back-off on consecutive failures; Tick now just reads
+        // the live BytesDone/BytesTotal/Speed that the poller wrote into
+        // ActiveDownloadClients.
 
         if (ActiveDownloadClients.Any(m => m.Value.Type == Data.Enums.DownloadClient.DownloadStation))
         {
