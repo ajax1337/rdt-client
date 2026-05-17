@@ -27,7 +27,14 @@ public class Aria2StatusPoller(ILogger<Aria2StatusPoller> logger, IHttpClientFac
     // Per-call budget for the TellAll RPC. The shared HttpClient still has a 60 s
     // ceiling so a saturated aria2c can recover instead of being killed, but the
     // poller refuses to wait more than this for any single response.
-    private static readonly TimeSpan TellAllRpcTimeout = TimeSpan.FromSeconds(4);
+    //
+    // Bumped from 4 s -> 10 s after observing that aria2's RPC routinely takes
+    // 6–8 s under high-throughput downloads (130 MB/s 4K WebDL pull). A 4 s budget
+    // was timing out just before the response arrived, then we'd wait HealthyPoll
+    // (1 s) before retrying — net 5+ s of stale dashboard data per cycle. With 10 s
+    // we typically catch the response on the first try and the dashboard only
+    // sees stale numbers for the actual response latency, not budget + retry.
+    private static readonly TimeSpan TellAllRpcTimeout = TimeSpan.FromSeconds(10);
 
     // Per-downloader budget for the Update() fanout. Aria2cDownloader.Update can call
     // Remove() (two RPCs) and then poll for file visibility with Task.Delay(1000 *
