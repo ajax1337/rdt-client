@@ -6,14 +6,25 @@ import { Nl2BrPipe } from '../nl2br.pipe';
 import { FileSizePipe } from '../filesize.pipe';
 import { SettingsService } from '../settings.service';
 
-// Suggested IncludeRegex for the well-known "video" category names. Pre-filled into
-// the Settings UI on load whenever a category with one of these names has no
-// persisted IncludeRegex yet. The user sees the suggestion, can edit or clear, and
-// commits by saving. Clearing + saving persists as blank (falls back to source
-// default); the next Settings open will re-suggest until the user customises and
-// saves something concrete.
+// Pre-fill recipe for the well-known "video" category names. When a category with one
+// of these names is opened in Settings and has no persisted IncludeRegex (or its
+// IncludeRegex is exactly the regex this list serializes to), the chip UI surfaces
+// these extensions. The user can add or remove chips and the regex is regenerated on
+// save. Any extension you can pull off a torrent file index counts here.
 const VIDEO_CATEGORY_NAMES_LOWER = new Set(['movies', 'tv shows', 'other videos']);
-const VIDEO_INCLUDE_REGEX_SUGGESTION = String.raw`\.(mkv|mp4|avi|mov|m4v|webm|mpe?g|m2ts|ts|vob|wmv|flv|3gp)$`;
+const VIDEO_DEFAULT_EXTENSIONS = ['mkv', 'mp4', 'avi', 'mov', 'm4v', 'webm', 'mpg', 'mpeg', 'm2ts', 'ts', 'vob', 'wmv', 'flv', '3gp'];
+
+// Pattern emitted by extensionsToRegex below. Used by regexToExtensions to round-trip
+// a persisted IncludeRegex back into a chip list. Anything more elaborate (paths,
+// anchors, custom groups) won't parse — the chips will start empty and a save will
+// overwrite the regex. We accept that trade-off in exchange for a simpler UI; users
+// with complex requirements can keep the global Provider.Default.IncludeRegex.
+const EXTENSION_LIST_REGEX_PATTERN = /^\\\.\(([a-z0-9|?]+)\)\$$/i;
+
+// What we accept inside a chip. Strict on purpose — the regex this becomes is a
+// straight \.(a|b|c)$ so anything other than alphanumerics would either break the
+// regex or change its meaning.
+const VALID_EXTENSION_CHIP = /^[a-z0-9]+$/i;
 
 @Component({
   selector: 'app-settings',
@@ -51,8 +62,16 @@ export class SettingsComponent implements OnInit {
     removeFromDashboard: boolean;
     removeFromProvider: boolean;
     removeLocalFiles: boolean;
-    includeRegex: string;
+    extensions: string[];
+    extensionInput: string;
+    // Persisted ExcludeRegex is preserved across save cycles even though the chip
+    // UI doesn't edit it. If the user has set ExcludeRegex by hand-editing the
+    // categories JSON, the chip UI will not blow it away.
     excludeRegex: string;
+    // Becomes true on parse when the persisted IncludeRegex doesn't match the
+    // simple \\.(ext1|ext2)$ pattern. The UI then shows a small note so the user
+    // knows their regex will be replaced by the chip list on save.
+    hasComplexIncludeRegex: boolean;
   }[] = [];
 
   // Symlink Downloader enum index. Kept in sync with RdtClient.Data.Enums.DownloadClient.
@@ -94,14 +113,54 @@ export class SettingsComponent implements OnInit {
       removeFromDashboard: false,
       removeFromProvider: false,
       removeLocalFiles: false,
-      includeRegex: '',
+      extensions: [],
+      extensionInput: '',
       excludeRegex: '',
+      hasComplexIncludeRegex: false,
     });
     this.syncCategories();
   }
 
   public removeCategoryRow(index: number): void {
     this.categoryRows.splice(index, 1);
+    this.syncCategories();
+  }
+
+  /**
+   * Add the extension typed into the row's input. Normalises (strips leading dot,
+   * lowercases, trims), validates (alphanumerics only), and dedupes. No-op if the
+   * input is blank or invalid.
+   */
+  public addExtension(rowIndex: number): void {
+    const row = this.categoryRows[rowIndex];
+    if (!row) return;
+
+    const raw = (row.extensionInput ?? '').trim().replace(/^\.+/, '').toLowerCase();
+    if (raw.length === 0) return;
+    if (!VALID_EXTENSION_CHIP.test(raw)) {
+      // Refuse silently — the input keeps its content so the user can fix it.
+      return;
+    }
+    if (row.extensions.includes(raw)) {
+      row.extensionInput = '';
+      return;
+    }
+
+    row.extensions = [...row.extensions, raw];
+    row.extensionInput = '';
+    // Adding a chip overwrites whatever complex regex was there; the warning is
+    // no longer accurate.
+    row.hasComplexIncludeRegex = false;
+    this.syncCategories();
+  }
+
+  public removeExtension(rowIndex: number, extIndex: number): void {
+    const row = this.categoryRows[rowIndex];
+    if (!row) return;
+    if (extIndex < 0 || extIndex >= row.extensions.length) return;
+
+    row.extensions = row.extensions.filter((_, i) => i !== extIndex);
+    row.hasComplexIncludeRegex = false;
     this.syncCategories();
   }
 
@@ -113,7 +172,7 @@ export class SettingsComponent implements OnInit {
 
     const cleaned = this.categoryRows
       .map((r) => {
-        const include = (r.includeRegex ?? '').trim();
+        const include = this.extensionsToRegex(r.extensions);
         const exclude = (r.excludeRegex ?? '').trim();
         // Omit blank regex keys from the JSON so the round-trip is stable and the
         // server-side resolver clearly sees "no per-category override".
@@ -139,6 +198,59 @@ export class SettingsComponent implements OnInit {
     categoriesSetting.value = JSON.stringify(cleaned);
   }
 
+  /**
+   * Build a \.(ext1|ext2|...)$ regex from a chip list. Returns empty string when
+   * the list is empty — caller skips writing the key so the server-side resolver
+   * falls back to the source default.
+   */
+  private extensionsToRegex(extensions: string[]): string {
+    const clean = (extensions ?? [])
+      .map((e) => e.trim().toLowerCase())
+      .filter((e) => e.length > 0 && VALID_EXTENSION_CHIP.test(e));
+    if (clean.length === 0) return '';
+    return `\\.(${clean.join('|')})$`;
+  }
+
+  /**
+   * Try to recover a chip list from a persisted IncludeRegex. Returns the
+   * extracted extensions plus a flag indicating whether the regex matched the
+   * simple pattern we emit. If it didn't, the regex is complex (hand-edited or
+   * left over from an earlier UI) and the chip list starts empty — the UI shows
+   * a warning so the user knows a save will replace it.
+   */
+  private regexToExtensions(includeRegex: string | null | undefined): {
+    extensions: string[];
+    isComplex: boolean;
+  } {
+    const raw = (includeRegex ?? '').trim();
+    if (raw.length === 0) {
+      return { extensions: [], isComplex: false };
+    }
+
+    const match = raw.match(EXTENSION_LIST_REGEX_PATTERN);
+    if (!match) {
+      return { extensions: [], isComplex: true };
+    }
+
+    const inner = match[1];
+    const extensions = inner
+      .split('|')
+      .map((e) => e.trim().toLowerCase())
+      .filter((e) => e.length > 0 && VALID_EXTENSION_CHIP.test(e));
+
+    // Dedupe while preserving order.
+    const seen = new Set<string>();
+    const deduped: string[] = [];
+    for (const e of extensions) {
+      if (!seen.has(e)) {
+        seen.add(e);
+        deduped.push(e);
+      }
+    }
+
+    return { extensions: deduped, isComplex: false };
+  }
+
   private findSetting(key: string): Setting | undefined {
     for (const tab of this.tabs) {
       for (const s of tab.settings ?? []) {
@@ -155,8 +267,10 @@ export class SettingsComponent implements OnInit {
     removeFromDashboard: boolean;
     removeFromProvider: boolean;
     removeLocalFiles: boolean;
-    includeRegex: string;
+    extensions: string[];
+    extensionInput: string;
     excludeRegex: string;
+    hasComplexIncludeRegex: boolean;
   }[] {
     if (!raw) {
       return [];
@@ -190,20 +304,32 @@ export class SettingsComponent implements OnInit {
                 const legacy = !!c.autoRemoveOnFinish && !dashboard && !provider && !local;
                 const persistedInclude = typeof c.includeRegex === 'string' ? c.includeRegex : '';
                 const persistedExclude = typeof c.excludeRegex === 'string' ? c.excludeRegex : '';
-                // First-read suggestion: if this is one of the well-known video category
-                // names and the user hasn't put anything in IncludeRegex yet, surface the
-                // default video filter so they only need to click Save to commit it.
-                const includeRegex =
-                  persistedInclude.length === 0 && VIDEO_CATEGORY_NAMES_LOWER.has(name.toLowerCase())
-                    ? VIDEO_INCLUDE_REGEX_SUGGESTION
-                    : persistedInclude;
+
+                // Try to recover a chip list from the persisted regex. If it doesn't
+                // match our simple pattern we still want to show the chip UI so the
+                // user can opt into it — but we flag it so the UI can warn that a save
+                // will overwrite the existing regex.
+                const recovered = this.regexToExtensions(persistedInclude);
+                let extensions = recovered.extensions;
+                const isComplex = recovered.isComplex;
+
+                // First-read suggestion: when one of the well-known video category
+                // names has no persisted IncludeRegex (and therefore no recovered
+                // extensions), pre-populate with the default video extension list so
+                // a single Save click commits the filter.
+                if (extensions.length === 0 && !isComplex && VIDEO_CATEGORY_NAMES_LOWER.has(name.toLowerCase())) {
+                  extensions = [...VIDEO_DEFAULT_EXTENSIONS];
+                }
+
                 return {
                   name,
                   removeFromDashboard: legacy ? true : dashboard,
                   removeFromProvider: legacy ? true : provider,
                   removeLocalFiles: local,
-                  includeRegex,
+                  extensions,
+                  extensionInput: '',
                   excludeRegex: persistedExclude,
+                  hasComplexIncludeRegex: isComplex,
                 };
               },
             );
@@ -222,8 +348,10 @@ export class SettingsComponent implements OnInit {
         removeFromDashboard: false,
         removeFromProvider: false,
         removeLocalFiles: false,
-        includeRegex: '',
+        extensions: VIDEO_CATEGORY_NAMES_LOWER.has(name.toLowerCase()) ? [...VIDEO_DEFAULT_EXTENSIONS] : [],
+        extensionInput: '',
         excludeRegex: '',
+        hasComplexIncludeRegex: false,
       }));
   }
 

@@ -662,3 +662,85 @@ td .status-pill {
   .add-label { display: block; margin-top: 0.45rem; }
   .add-help  { margin-top: 0.25rem; }
 }
+
+// Per-category "Allowed file extensions" chip UI in Settings → Categories. Each
+// chip is a removable tag, with an inline text input + Add button to append more.
+// Lives in styles.scss because settings.component.scss is already over its 2 KB
+// per-component budget.
+.ext-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.ext-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  background: rgba(108, 196, 255, 0.08);
+  border: 1px solid rgba(108, 196, 255, 0.2);
+  color: #c9d1de;
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.ext-chip__remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #8b94a7;
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  border-radius: 50%;
+  transition: background 120ms ease, color 120ms ease;
+
+  &:hover { background: rgba(255, 107, 107, 0.15); color: #ff8a8a; }
+}
+
+.ext-input {
+  width: 5rem;
+  min-width: 5rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  background: transparent;
+  border: 1px dashed rgba(108, 196, 255, 0.28);
+  color: #ffffff;
+  font-size: 0.78rem;
+
+  &::placeholder { color: #6b7280; }
+  &:focus { outline: none; border-color: rgba(108, 196, 255, 0.6); background: rgba(108, 196, 255, 0.05); }
+}
+
+.ext-add-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(108, 196, 255, 0.28);
+  background: rgba(108, 196, 255, 0.06);
+  color: #6cc4ff;
+  cursor: pointer;
+  font-size: 0.7rem;
+  transition: background 120ms ease, color 120ms ease;
+
+  &:hover { background: rgba(108, 196, 255, 0.18); color: #ffffff; }
+  i { font-size: 0.6rem; }
+}
+
+.category-card__ext-warn {
+  color: #ffd884;
+}

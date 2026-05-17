@@ -105,33 +105,49 @@
                           Local files
                         </label>
                       </div>
-                      <details class="category-card__filters">
-                        <summary>File filters (regex)</summary>
-                        <label class="add-label">Include regex</label>
-                        <input
-                          class="add-input"
-                          type="text"
-                          [(ngModel)]="row.includeRegex"
-                          (ngModelChange)="syncCategories()"
-                          placeholder="\.(mkv|mp4|avi|mov|m4v|webm|mpe?g|m2ts|ts|vob|wmv|flv|3gp)$"
-                        />
-                        <p class="add-help">
-                          When set, only files whose path matches this regex are downloaded. Overrides the
-                          source-level <em>Include regex</em> default.
+                      <div class="category-card__actions">
+                        <span class="category-card__actions-label">Allowed file extensions</span>
+                        <div class="ext-chip-row">
+                          @for (ext of row.extensions; track ext; let extIndex = $index) {
+                            <span class="ext-chip">
+                              .{{ ext }}
+                              <button
+                                type="button"
+                                class="ext-chip__remove"
+                                (click)="removeExtension(i, extIndex)"
+                                [attr.aria-label]="'Remove .' + ext"
+                                title="Remove"
+                              >
+                                ×
+                              </button>
+                            </span>
+                          }
+                          <input
+                            class="ext-input"
+                            type="text"
+                            [(ngModel)]="row.extensionInput"
+                            (keydown.enter)="$event.preventDefault(); addExtension(i)"
+                            placeholder="ext"
+                            spellcheck="false"
+                            autocomplete="off"
+                          />
+                          <button type="button" class="ext-add-btn" (click)="addExtension(i)" title="Add extension">
+                            <i class="fas fa-plus" aria-hidden="true"></i>
+                          </button>
+                        </div>
+                      </div>
+                      @if (row.hasComplexIncludeRegex) {
+                        <p class="add-help category-card__ext-warn">
+                          A custom regex is currently saved for this category. Adding or removing a chip will
+                          replace it.
                         </p>
-                        <label class="add-label">Exclude regex</label>
-                        <input
-                          class="add-input"
-                          type="text"
-                          [(ngModel)]="row.excludeRegex"
-                          (ngModelChange)="syncCategories()"
-                          placeholder="\.(nfo|txt|sfv|md5|jpe?g|png|gif|srt|sub|idx|url|website)$"
-                        />
+                      } @else if (row.extensions.length === 0) {
+                        <p class="add-help">No extension filter — falls back to the source-level default.</p>
+                      } @else {
                         <p class="add-help">
-                          Ignored whenever <em>Include regex</em> is set (on the category, on the torrent, or
-                          on the source default). Otherwise drops files whose path matches.
+                          Only files whose path ends with one of these extensions will be downloaded.
                         </p>
-                      </details>
+                      }
                     </div>
                   }
                   <button type="button" class="add-btn-ghost" (click)="addCategoryRow()">
