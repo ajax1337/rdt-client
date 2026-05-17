@@ -6,6 +6,15 @@ import { Nl2BrPipe } from '../nl2br.pipe';
 import { FileSizePipe } from '../filesize.pipe';
 import { SettingsService } from '../settings.service';
 
+// Suggested IncludeRegex for the well-known "video" category names. Pre-filled into
+// the Settings UI on load whenever a category with one of these names has no
+// persisted IncludeRegex yet. The user sees the suggestion, can edit or clear, and
+// commits by saving. Clearing + saving persists as blank (falls back to source
+// default); the next Settings open will re-suggest until the user customises and
+// saves something concrete.
+const VIDEO_CATEGORY_NAMES_LOWER = new Set(['movies', 'tv shows', 'other videos']);
+const VIDEO_INCLUDE_REGEX_SUGGESTION = String.raw`\.(mkv|mp4|avi|mov|m4v|webm|mpe?g|m2ts|ts|vob|wmv|flv|3gp)$`;
+
 @Component({
   selector: 'app-settings',
   templateUrl: './settings.component.html',
@@ -72,6 +81,10 @@ export class SettingsComponent implements OnInit {
 
       const categoriesSetting = this.findSetting('General:Categories');
       this.categoryRows = this.parseCategoriesValue(categoriesSetting?.value as string | null | undefined);
+      // parseCategoriesValue may have injected a suggested IncludeRegex for the
+      // well-known video categories. Push that back into categoriesSetting.value so
+      // a Save click commits the suggestion (no other UI interaction needed).
+      this.syncCategories();
     });
   }
 
@@ -168,19 +181,29 @@ export class SettingsComponent implements OnInit {
                 includeRegex?: unknown;
                 excludeRegex?: unknown;
               }) => {
+                const name = String(c.name).trim();
                 const dashboard = !!c.removeFromDashboard;
                 const provider = !!c.removeFromProvider;
                 const local = !!c.removeLocalFiles;
                 // Migrate the legacy single-flag form to "dashboard + provider" only if no
                 // granular flag is set yet — newer choices always win.
                 const legacy = !!c.autoRemoveOnFinish && !dashboard && !provider && !local;
+                const persistedInclude = typeof c.includeRegex === 'string' ? c.includeRegex : '';
+                const persistedExclude = typeof c.excludeRegex === 'string' ? c.excludeRegex : '';
+                // First-read suggestion: if this is one of the well-known video category
+                // names and the user hasn't put anything in IncludeRegex yet, surface the
+                // default video filter so they only need to click Save to commit it.
+                const includeRegex =
+                  persistedInclude.length === 0 && VIDEO_CATEGORY_NAMES_LOWER.has(name.toLowerCase())
+                    ? VIDEO_INCLUDE_REGEX_SUGGESTION
+                    : persistedInclude;
                 return {
-                  name: String(c.name).trim(),
+                  name,
                   removeFromDashboard: legacy ? true : dashboard,
                   removeFromProvider: legacy ? true : provider,
                   removeLocalFiles: local,
-                  includeRegex: typeof c.includeRegex === 'string' ? c.includeRegex : '',
-                  excludeRegex: typeof c.excludeRegex === 'string' ? c.excludeRegex : '',
+                  includeRegex,
+                  excludeRegex: persistedExclude,
                 };
               },
             );
