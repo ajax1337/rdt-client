@@ -3,6 +3,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using RdtClient.Data.Enums;
 using RdtClient.Data.Models.Data;
+using RdtClient.Service.Helpers;
 using RdtClient.Service.Services;
 using LogLevel = Microsoft.Extensions.Logging.LogLevel;
 
@@ -76,6 +77,11 @@ public class WatchFolderChecker(ILogger<WatchFolderChecker> logger, IServiceProv
                     {
                         logger.Log(LogLevel.Debug, "Processing {torrentFile}", torrentFile);
 
+                        var (watchInclude, watchExclude) = CategoryFilterResolver.Resolve(
+                            Settings.Get.Watch.Default.Category,
+                            Settings.Get.Watch.Default.IncludeRegex,
+                            Settings.Get.Watch.Default.ExcludeRegex);
+
                         var torrent = new Torrent
                         {
                             DownloadClient = Settings.Get.DownloadClient.Client,
@@ -87,8 +93,8 @@ public class WatchFolderChecker(ILogger<WatchFolderChecker> logger, IServiceProv
                                 : TorrentDownloadAction.DownloadAll,
                             FinishedAction = Settings.Get.Watch.Default.FinishedAction,
                             DownloadMinSize = Settings.Get.Watch.Default.MinFileSize,
-                            IncludeRegex = Settings.Get.Watch.Default.IncludeRegex,
-                            ExcludeRegex = Settings.Get.Watch.Default.ExcludeRegex,
+                            IncludeRegex = watchInclude,
+                            ExcludeRegex = watchExclude,
                             TorrentRetryAttempts = Settings.Get.Watch.Default.TorrentRetryAttempts,
                             DownloadRetryAttempts = Settings.Get.Watch.Default.DownloadRetryAttempts,
                             DeleteOnError = Settings.Get.Watch.Default.DeleteOnError,

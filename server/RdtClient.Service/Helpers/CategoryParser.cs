@@ -62,7 +62,9 @@ public static class CategoryParser
             return "[]";
         }
 
-        // Don't write the legacy field on disk going forward.
+        // Don't write the legacy field on disk going forward. Normalize blank regex
+        // strings to null so the round-trip is stable (a freshly-cleared input box
+        // shouldn't change the JSON shape between saves).
         var clean = categories
                     .Where(c => c != null)
                     .Select(c => new DbCategory
@@ -70,7 +72,9 @@ public static class CategoryParser
                         Name = (c.Name ?? "").Trim(),
                         RemoveFromDashboard = c.RemoveFromDashboard,
                         RemoveFromProvider = c.RemoveFromProvider,
-                        RemoveLocalFiles = c.RemoveLocalFiles
+                        RemoveLocalFiles = c.RemoveLocalFiles,
+                        IncludeRegex = String.IsNullOrWhiteSpace(c.IncludeRegex) ? null : c.IncludeRegex.Trim(),
+                        ExcludeRegex = String.IsNullOrWhiteSpace(c.ExcludeRegex) ? null : c.ExcludeRegex.Trim()
                     })
                     .ToList();
 
@@ -95,6 +99,8 @@ public static class CategoryParser
     private static DbCategory MigrateLegacy(DbCategory c)
     {
         var name = c.Name.Trim();
+        var includeRegex = String.IsNullOrWhiteSpace(c.IncludeRegex) ? null : c.IncludeRegex.Trim();
+        var excludeRegex = String.IsNullOrWhiteSpace(c.ExcludeRegex) ? null : c.ExcludeRegex.Trim();
 
         // Only migrate when the user hasn't explicitly set any granular flag — otherwise
         // their newer choices win.
@@ -105,7 +111,9 @@ public static class CategoryParser
                 Name = name,
                 RemoveFromDashboard = true,
                 RemoveFromProvider = true,
-                RemoveLocalFiles = false
+                RemoveLocalFiles = false,
+                IncludeRegex = includeRegex,
+                ExcludeRegex = excludeRegex
             };
         }
 
@@ -114,7 +122,9 @@ public static class CategoryParser
             Name = name,
             RemoveFromDashboard = c.RemoveFromDashboard,
             RemoveFromProvider = c.RemoveFromProvider,
-            RemoveLocalFiles = c.RemoveLocalFiles
+            RemoveLocalFiles = c.RemoveLocalFiles,
+            IncludeRegex = includeRegex,
+            ExcludeRegex = excludeRegex
         };
     }
 }

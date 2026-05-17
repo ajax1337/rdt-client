@@ -835,6 +835,11 @@ public class Torrents(
                 // Auto import torrents only torrents that have their files selected
                 if (torrent == null && Settings.Get.Provider.AutoImport)
                 {
+                    var (autoIncludeRegex, autoExcludeRegex) = CategoryFilterResolver.Resolve(
+                        Settings.Get.Provider.Default.Category,
+                        Settings.Get.Provider.Default.IncludeRegex,
+                        Settings.Get.Provider.Default.ExcludeRegex);
+
                     var newTorrent = new Torrent
                     {
                         Category = Settings.Get.Provider.Default.Category,
@@ -845,8 +850,8 @@ public class Torrents(
                         FinishedActionDelay = Settings.Get.Provider.Default.FinishedActionDelay,
                         FinishedAction = Settings.Get.Provider.Default.FinishedAction,
                         DownloadMinSize = Settings.Get.Provider.Default.MinFileSize,
-                        IncludeRegex = Settings.Get.Provider.Default.IncludeRegex,
-                        ExcludeRegex = Settings.Get.Provider.Default.ExcludeRegex,
+                        IncludeRegex = autoIncludeRegex,
+                        ExcludeRegex = autoExcludeRegex,
                         TorrentRetryAttempts = Settings.Get.Provider.Default.TorrentRetryAttempts,
                         DownloadRetryAttempts = Settings.Get.Provider.Default.DownloadRetryAttempts,
                         DeleteOnError = Settings.Get.Provider.Default.DeleteOnError,
@@ -1122,6 +1127,26 @@ public class Torrents(
         if (existingTorrent != null)
         {
             return existingTorrent;
+        }
+
+        // If the user didn't type an explicit regex on the Add form, fall back to the
+        // category's regex (and then to the source-level Default — Provider.Default
+        // here since this path serves the dashboard / API uploads). An explicit value
+        // on the torrent always wins so the per-torrent override on the Add form is
+        // preserved.
+        var (categoryInclude, categoryExclude) = CategoryFilterResolver.Resolve(
+            torrent.Category,
+            Settings.Get.Provider.Default.IncludeRegex,
+            Settings.Get.Provider.Default.ExcludeRegex);
+
+        if (String.IsNullOrWhiteSpace(torrent.IncludeRegex))
+        {
+            torrent.IncludeRegex = categoryInclude;
+        }
+
+        if (String.IsNullOrWhiteSpace(torrent.ExcludeRegex))
+        {
+            torrent.ExcludeRegex = categoryExclude;
         }
 
         var newTorrent = await torrentData.Add(null,

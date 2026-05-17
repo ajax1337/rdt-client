@@ -148,6 +148,65 @@ public class CategoryParserTest
     }
 
     [Fact]
+    public void Parse_NewJsonFormat_PreservesIncludeAndExcludeRegex()
+    {
+        var json = """
+                   [
+                     {"name":"Movies","includeRegex":"\\.(mkv|mp4)$","excludeRegex":"sample"},
+                     {"name":"TV Shows"}
+                   ]
+                   """;
+
+        var result = CategoryParser.Parse(json);
+
+        Assert.Equal(2, result.Count);
+        Assert.Equal("\\.(mkv|mp4)$", result[0].IncludeRegex);
+        Assert.Equal("sample", result[0].ExcludeRegex);
+        Assert.Null(result[1].IncludeRegex);
+        Assert.Null(result[1].ExcludeRegex);
+    }
+
+    [Fact]
+    public void Parse_BlankRegexValues_NormalizeToNull()
+    {
+        // Whitespace-only regex from a hand-edited DB row should be treated as "no
+        // override" so the resolver falls through to the source-level default.
+        var json = """[{"name":"Movies","includeRegex":"   ","excludeRegex":""}]""";
+
+        var result = CategoryParser.Parse(json);
+
+        Assert.Single(result);
+        Assert.Null(result[0].IncludeRegex);
+        Assert.Null(result[0].ExcludeRegex);
+    }
+
+    [Fact]
+    public void Serialize_RoundTripsRegexFieldsAndOmitsWhenBlank()
+    {
+        var input = new[]
+        {
+            new DbCategory { Name = "Movies", IncludeRegex = "\\.(mkv|mp4)$" },
+            new DbCategory { Name = "TV Shows", ExcludeRegex = "sample" },
+            new DbCategory { Name = "Other videos" } // no regex — both keys omitted
+        };
+
+        var json = CategoryParser.Serialize(input);
+
+        Assert.Contains("\"includeRegex\":\"\\\\.(mkv|mp4)$\"", json);
+        Assert.Contains("\"excludeRegex\":\"sample\"", json);
+
+        // Round-trip
+        var roundTripped = CategoryParser.Parse(json);
+        Assert.Equal(3, roundTripped.Count);
+        Assert.Equal("\\.(mkv|mp4)$", roundTripped[0].IncludeRegex);
+        Assert.Null(roundTripped[0].ExcludeRegex);
+        Assert.Null(roundTripped[1].IncludeRegex);
+        Assert.Equal("sample", roundTripped[1].ExcludeRegex);
+        Assert.Null(roundTripped[2].IncludeRegex);
+        Assert.Null(roundTripped[2].ExcludeRegex);
+    }
+
+    [Fact]
     public void Names_ReturnsBareNamesInOrder()
     {
         var names = CategoryParser.Names("Movies,TV Shows,Other videos");

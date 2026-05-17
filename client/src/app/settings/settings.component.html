@@ -105,6 +105,33 @@
                           Local files
                         </label>
                       </div>
+                      <details class="category-card__filters">
+                        <summary>File filters (regex)</summary>
+                        <label class="add-label">Include regex</label>
+                        <input
+                          class="add-input"
+                          type="text"
+                          [(ngModel)]="row.includeRegex"
+                          (ngModelChange)="syncCategories()"
+                          placeholder="\.(mkv|mp4|avi|mov|m4v|webm|mpe?g|m2ts|ts|vob|wmv|flv|3gp)$"
+                        />
+                        <p class="add-help">
+                          When set, only files whose path matches this regex are downloaded. Overrides the
+                          source-level <em>Include regex</em> default.
+                        </p>
+                        <label class="add-label">Exclude regex</label>
+                        <input
+                          class="add-input"
+                          type="text"
+                          [(ngModel)]="row.excludeRegex"
+                          (ngModelChange)="syncCategories()"
+                          placeholder="\.(nfo|txt|sfv|md5|jpe?g|png|gif|srt|sub|idx|url|website)$"
+                        />
+                        <p class="add-help">
+                          Ignored whenever <em>Include regex</em> is set (on the category, on the torrent, or
+                          on the source default). Otherwise drops files whose path matches.
+                        </p>
+                      </details>
                     </div>
                   }
                   <button type="button" class="add-btn-ghost" (click)="addCategoryRow()">

@@ -478,6 +478,11 @@ public class QBittorrent(ILogger<QBittorrent> logger, Settings settings, Authent
     {
         logger.LogDebug($"Add magnet {category}");
 
+        var (include, exclude) = CategoryFilterResolver.Resolve(
+            category,
+            Settings.Get.Integrations.Default.IncludeRegex,
+            Settings.Get.Integrations.Default.ExcludeRegex);
+
         var torrent = new Torrent
         {
             Category = category,
@@ -487,8 +492,8 @@ public class QBittorrent(ILogger<QBittorrent> logger, Settings settings, Authent
             DownloadAction = Settings.Get.Integrations.Default.OnlyDownloadAvailableFiles ? TorrentDownloadAction.DownloadAvailableFiles : TorrentDownloadAction.DownloadAll,
             FinishedAction = TorrentFinishedAction.None,
             DownloadMinSize = Settings.Get.Integrations.Default.MinFileSize,
-            IncludeRegex = Settings.Get.Integrations.Default.IncludeRegex,
-            ExcludeRegex = Settings.Get.Integrations.Default.ExcludeRegex,
+            IncludeRegex = include,
+            ExcludeRegex = exclude,
             TorrentRetryAttempts = Settings.Get.Integrations.Default.TorrentRetryAttempts,
             DownloadRetryAttempts = Settings.Get.Integrations.Default.DownloadRetryAttempts,
             DeleteOnError = Settings.Get.Integrations.Default.DeleteOnError,
@@ -503,6 +508,11 @@ public class QBittorrent(ILogger<QBittorrent> logger, Settings settings, Authent
     {
         logger.LogDebug($"Add file {category}");
 
+        var (include, exclude) = CategoryFilterResolver.Resolve(
+            category,
+            Settings.Get.Integrations.Default.IncludeRegex,
+            Settings.Get.Integrations.Default.ExcludeRegex);
+
         var torrent = new Torrent
         {
             Category = category,
@@ -512,8 +522,8 @@ public class QBittorrent(ILogger<QBittorrent> logger, Settings settings, Authent
             DownloadAction = Settings.Get.Integrations.Default.OnlyDownloadAvailableFiles ? TorrentDownloadAction.DownloadAvailableFiles : TorrentDownloadAction.DownloadAll,
             FinishedAction = TorrentFinishedAction.None,
             DownloadMinSize = Settings.Get.Integrations.Default.MinFileSize,
-            IncludeRegex = Settings.Get.Integrations.Default.IncludeRegex,
-            ExcludeRegex = Settings.Get.Integrations.Default.ExcludeRegex,
+            IncludeRegex = include,
+            ExcludeRegex = exclude,
             TorrentRetryAttempts = Settings.Get.Integrations.Default.TorrentRetryAttempts,
             DownloadRetryAttempts = Settings.Get.Integrations.Default.DownloadRetryAttempts,
             DeleteOnError = Settings.Get.Integrations.Default.DeleteOnError,

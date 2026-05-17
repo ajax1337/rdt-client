@@ -42,6 +42,8 @@ export class SettingsComponent implements OnInit {
     removeFromDashboard: boolean;
     removeFromProvider: boolean;
     removeLocalFiles: boolean;
+    includeRegex: string;
+    excludeRegex: string;
   }[] = [];
 
   // Symlink Downloader enum index. Kept in sync with RdtClient.Data.Enums.DownloadClient.
@@ -74,7 +76,14 @@ export class SettingsComponent implements OnInit {
   }
 
   public addCategoryRow(): void {
-    this.categoryRows.push({ name: '', removeFromDashboard: false, removeFromProvider: false, removeLocalFiles: false });
+    this.categoryRows.push({
+      name: '',
+      removeFromDashboard: false,
+      removeFromProvider: false,
+      removeLocalFiles: false,
+      includeRegex: '',
+      excludeRegex: '',
+    });
     this.syncCategories();
   }
 
@@ -90,12 +99,28 @@ export class SettingsComponent implements OnInit {
     }
 
     const cleaned = this.categoryRows
-      .map((r) => ({
-        name: (r.name ?? '').trim(),
-        removeFromDashboard: !!r.removeFromDashboard,
-        removeFromProvider: !!r.removeFromProvider,
-        removeLocalFiles: !!r.removeLocalFiles,
-      }))
+      .map((r) => {
+        const include = (r.includeRegex ?? '').trim();
+        const exclude = (r.excludeRegex ?? '').trim();
+        // Omit blank regex keys from the JSON so the round-trip is stable and the
+        // server-side resolver clearly sees "no per-category override".
+        const row: {
+          name: string;
+          removeFromDashboard: boolean;
+          removeFromProvider: boolean;
+          removeLocalFiles: boolean;
+          includeRegex?: string;
+          excludeRegex?: string;
+        } = {
+          name: (r.name ?? '').trim(),
+          removeFromDashboard: !!r.removeFromDashboard,
+          removeFromProvider: !!r.removeFromProvider,
+          removeLocalFiles: !!r.removeLocalFiles,
+        };
+        if (include.length > 0) row.includeRegex = include;
+        if (exclude.length > 0) row.excludeRegex = exclude;
+        return row;
+      })
       .filter((r) => r.name.length > 0);
 
     categoriesSetting.value = JSON.stringify(cleaned);
@@ -117,6 +142,8 @@ export class SettingsComponent implements OnInit {
     removeFromDashboard: boolean;
     removeFromProvider: boolean;
     removeLocalFiles: boolean;
+    includeRegex: string;
+    excludeRegex: string;
   }[] {
     if (!raw) {
       return [];
@@ -138,6 +165,8 @@ export class SettingsComponent implements OnInit {
                 removeFromDashboard?: unknown;
                 removeFromProvider?: unknown;
                 removeLocalFiles?: unknown;
+                includeRegex?: unknown;
+                excludeRegex?: unknown;
               }) => {
                 const dashboard = !!c.removeFromDashboard;
                 const provider = !!c.removeFromProvider;
@@ -150,6 +179,8 @@ export class SettingsComponent implements OnInit {
                   removeFromDashboard: legacy ? true : dashboard,
                   removeFromProvider: legacy ? true : provider,
                   removeLocalFiles: local,
+                  includeRegex: typeof c.includeRegex === 'string' ? c.includeRegex : '',
+                  excludeRegex: typeof c.excludeRegex === 'string' ? c.excludeRegex : '',
                 };
               },
             );
@@ -168,6 +199,8 @@ export class SettingsComponent implements OnInit {
         removeFromDashboard: false,
         removeFromProvider: false,
         removeLocalFiles: false,
+        includeRegex: '',
+        excludeRegex: '',
       }));
   }
 
