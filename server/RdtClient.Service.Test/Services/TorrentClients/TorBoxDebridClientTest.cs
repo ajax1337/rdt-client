@@ -1095,6 +1095,36 @@ public class TorBoxDebridClientTest
     }
 
     [Fact]
+    public async Task UpdateData_SetsErrorStatus_WhenTorBoxResourceIsMissing()
+    {
+        // Arrange
+        var torrent = new Torrent
+        {
+            RdId = "missing-rd-id",
+            RdStatus = TorrentStatus.Queued
+        };
+
+        var torrentsApiMock = new Mock<ITorrentsApi>();
+        var torBoxClientMock = new Mock<ITorBoxNetClient>();
+        var clientMock = new Mock<TorBoxDebridClient>(_loggerMock.Object, _httpClientFactoryMock.Object, _fileFilterMock.Object, _coordinatorMock.Object)
+        {
+            CallBase = true
+        };
+
+        torBoxClientMock.Setup(m => m.Torrents).Returns(torrentsApiMock.Object);
+        clientMock.Protected().Setup<ITorBoxNetClient>("GetClient", ItExpr.IsAny<String>()).Returns(torBoxClientMock.Object);
+        torrentsApiMock.Setup(m => m.GetHashInfoAsync(torrent.RdId, true, It.IsAny<CancellationToken>()))
+                       .ReturnsAsync((TorrentInfoResult?)null);
+
+        // Act
+        var result = await clientMock.Object.UpdateData(torrent, null);
+
+        // Assert
+        Assert.Equal("deleted", result.RdStatusRaw);
+        Assert.Equal(TorrentStatus.Error, result.RdStatus);
+    }
+
+    [Fact]
     public async Task UpdateData_LogsWarning_WhenTorBoxStatusIsUnmapped()
     {
         // Arrange

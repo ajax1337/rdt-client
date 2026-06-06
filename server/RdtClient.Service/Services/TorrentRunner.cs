@@ -73,6 +73,11 @@ public class TorrentRunner(
         KnownDownloadSize.TryRemove(downloadId, out _);
     }
 
+    private static Boolean IsDeletedFromProvider(Torrent torrent)
+    {
+        return String.Equals(torrent.RdStatusRaw, "deleted", StringComparison.OrdinalIgnoreCase);
+    }
+
     public async Task Initialize()
     {
         Log("Initializing TorrentRunner");
@@ -730,7 +735,7 @@ public class TorrentRunner(
                 Log("Processing", torrent);
 
                 // If torrent is erroring out on the debrid side.
-                if (torrent.RdStatus == TorrentStatus.Error)
+                if (torrent.RdStatus == TorrentStatus.Error || IsDeletedFromProvider(torrent))
                 {
                     Log($"Torrent reported an error: {torrent.RdStatusRaw}", torrent);
                     Log($"Torrent retry count {torrent.RetryCount}/{torrent.TorrentRetryAttempts}", torrent);

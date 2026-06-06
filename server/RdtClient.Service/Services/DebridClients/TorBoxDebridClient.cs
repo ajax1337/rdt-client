@@ -430,6 +430,7 @@ public class TorBoxDebridClient(ILogger<TorBoxDebridClient> logger, IHttpClientF
             if (ex.Message == "Resource not found")
             {
                 torrent.RdStatusRaw = "deleted";
+                torrent.RdStatus = TorrentStatus.Error;
             }
             else
             {
