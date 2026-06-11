@@ -34,6 +34,7 @@ public class TorBoxDebridClient(ILogger<TorBoxDebridClient> logger, IHttpClientF
     {
         NullValueHandling = NullValueHandling.Ignore
     };
+    private static readonly TimeSpan MissingResourceGracePeriod = TimeSpan.FromMinutes(10);
 
     private TimeSpan? _offset;
 
@@ -329,23 +330,91 @@ public class TorBoxDebridClient(ILogger<TorBoxDebridClient> logger, IHttpClientF
             throw new ArgumentException($"Invalid file ID in link segment 5: {fileId}", nameof(link));
         }
 
-        Response<String> result;
-
-        if (torrent.Type == DownloadType.Nzb)
+        async Task<String> RequestDownloadLink(Int32 id)
         {
-            result = await HandleErrors(() => GetClient().Usenet.RequestDownloadAsync(torrentId, fileId, zipped));
-        }
-        else
-        {
-            result = await HandleErrors(() => GetClient().Torrents.RequestDownloadAsync(torrentId, fileId, zipped));
+            Response<String> result;
+
+            if (torrent.Type == DownloadType.Nzb)
+            {
+                result = await HandleErrors(() => GetClient().Usenet.RequestDownloadAsync(id, fileId, zipped));
+            }
+            else
+            {
+                result = await HandleErrors(() => GetClient().Torrents.RequestDownloadAsync(id, fileId, zipped));
+            }
+
+            if (result.Error != null)
+            {
+                throw new($"Unrestrict returned an invalid download: {result.Error}");
+            }
+
+            return result.Data!;
         }
 
-        if (result.Error != null)
+        try
         {
-            throw new($"Unrestrict returned an invalid download: {result.Error}");
+            return await RequestDownloadLink(torrentId);
         }
+        catch (RateLimitException)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            // The id embedded in the fakedl link is the TorBox id at the time the file
+            // list was fetched. Retrying a torrent deletes + re-adds it on TorBox, which
+            // assigns a new id, so the embedded id can point at a deleted instance and
+            // requestdl fails with DATABASE_ERROR. Re-resolve the current id by hash and
+            // try once more before giving up.
+            var freshId = await TryResolveCurrentProviderId(torrent);
 
-        return result.Data!;
+            if (freshId == null || freshId.Value == torrentId)
+            {
+                throw;
+            }
+
+            logger.LogWarning("TorBox id {StaleId} in link {Link} is stale, retrying with current id {FreshId} for hash {Hash}", torrentId, link, freshId.Value, torrent.Hash);
+
+            return await RequestDownloadLink(freshId.Value);
+        }
+    }
+
+    /// <summary>
+    /// Looks up the torrent's current TorBox id by hash, bypassing any cached list data.
+    /// Returns null when the hash cannot be found or the lookup fails.
+    /// </summary>
+    private async Task<Int32?> TryResolveCurrentProviderId(Torrent torrent)
+    {
+        try
+        {
+            if (torrent.Type == DownloadType.Nzb)
+            {
+                var usenets = await GetClient().Usenet.GetCurrentAsync(true);
+                var usenetMatch = usenets?.FirstOrDefault(m => String.Equals(m.Hash, torrent.RdId, StringComparison.OrdinalIgnoreCase) ||
+                                                               String.Equals(m.Hash, torrent.Hash, StringComparison.OrdinalIgnoreCase));
+
+                return (Int32?)usenetMatch?.Id;
+            }
+
+            var currentTorrents = await GetClient().Torrents.GetCurrentAsync(true);
+            var currentMatch = currentTorrents?.FirstOrDefault(t => String.Equals(t.Hash, torrent.Hash, StringComparison.OrdinalIgnoreCase));
+
+            if (currentMatch != null)
+            {
+                return currentMatch.Id;
+            }
+
+            var queuedTorrents = await GetClient().Torrents.GetQueuedAsync(true);
+            var queuedMatch = queuedTorrents?.FirstOrDefault(t => String.Equals(t.Hash, torrent.Hash, StringComparison.OrdinalIgnoreCase));
+
+            return queuedMatch?.Id;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to re-resolve TorBox id for hash {Hash}", torrent.Hash);
+
+            return null;
+        }
     }
 
     public async Task<Torrent> UpdateData(Torrent torrent, DebridClientTorrent? torrentClientTorrent)
@@ -429,8 +498,22 @@ public class TorBoxDebridClient(ILogger<TorBoxDebridClient> logger, IHttpClientF
         {
             if (ex.Message == "Resource not found")
             {
-                torrent.RdStatusRaw = "deleted";
-                torrent.RdStatus = TorrentStatus.Error;
+                if (torrent.Added > DateTimeOffset.UtcNow.Subtract(MissingResourceGracePeriod))
+                {
+                    logger.LogWarning(
+                        "TorBox resource {RdId} for torrent {TorrentId} was not found yet. Keeping it in processing during the grace period.",
+                        torrent.RdId,
+                        torrent.TorrentId);
+
+                    torrent.ClientKind = Provider.TorBox;
+                    torrent.RdStatusRaw = "waiting_for_torbox";
+                    torrent.RdStatus = TorrentStatus.Processing;
+                }
+                else
+                {
+                    torrent.RdStatusRaw = "deleted";
+                    torrent.RdStatus = TorrentStatus.Error;
+                }
             }
             else
             {
@@ -773,6 +856,22 @@ public class TorBoxDebridClient(ILogger<TorBoxDebridClient> logger, IHttpClientF
                 if (result != null)
                 {
                     return Map(result);
+                }
+
+                var currentTorrents = await GetClient().Torrents.GetCurrentAsync(true);
+                var currentMatch = currentTorrents?.FirstOrDefault(t => String.Equals(t.Hash, id, StringComparison.OrdinalIgnoreCase));
+
+                if (currentMatch != null)
+                {
+                    return Map(currentMatch);
+                }
+
+                var queuedTorrents = await GetClient().Torrents.GetQueuedAsync(true);
+                var queuedMatch = queuedTorrents?.FirstOrDefault(t => String.Equals(t.Hash, id, StringComparison.OrdinalIgnoreCase));
+
+                if (queuedMatch != null)
+                {
+                    return Map(queuedMatch);
                 }
             }
 

@@ -681,6 +681,56 @@ public class TorBoxDebridClientTest
     }
 
     [Fact]
+    public async Task Unrestrict_ReResolvesTorrentIdByHash_WhenLinkIdIsStale()
+    {
+        // Arrange
+        var torrent = new Torrent
+        {
+            Type = DownloadType.Torrent,
+            Hash = "ABCDEF1234"
+        };
+
+        var link = "https://torbox.app/fakedl/39089761/2";
+
+        var torrentsApiMock = new Mock<ITorrentsApi>();
+        var clientMock = new Mock<TorBoxDebridClient>(_loggerMock.Object, _httpClientFactoryMock.Object, _fileFilterMock.Object, _coordinatorMock.Object);
+        var torBoxClientMock = new Mock<ITorBoxNetClient>();
+
+        torBoxClientMock.Setup(m => m.Torrents).Returns(torrentsApiMock.Object);
+        clientMock.Protected().Setup<ITorBoxNetClient>("GetClient", ItExpr.IsAny<String>()).Returns(torBoxClientMock.Object);
+
+        // The id embedded in the link belongs to a deleted TorBox instance (retry deletes +
+        // re-adds the torrent, which assigns a new id): requestdl on the old id fails.
+        torrentsApiMock.Setup(m => m.RequestDownloadAsync(39089761, 2, false, It.IsAny<CancellationToken>()))
+                       .ThrowsAsync(new Exception("There was an error processing your request. Please try again later."));
+
+        // The torrent now lives under a new id, found by case-insensitive hash lookup.
+        torrentsApiMock.Setup(m => m.GetCurrentAsync(true, It.IsAny<CancellationToken>()))
+                       .ReturnsAsync(new List<TorrentInfoResult>
+                       {
+                           new()
+                           {
+                               Id = 39097730,
+                               Hash = "abcdef1234"
+                           }
+                       });
+
+        torrentsApiMock.Setup(m => m.RequestDownloadAsync(39097730, 2, false, It.IsAny<CancellationToken>()))
+                       .ReturnsAsync(new Response<String>
+                       {
+                           Data = "https://real-download-link"
+                       });
+
+        // Act
+        var result = await clientMock.Object.Unrestrict(torrent, link);
+
+        // Assert
+        Assert.Equal("https://real-download-link", result);
+        torrentsApiMock.Verify(m => m.RequestDownloadAsync(39089761, 2, false, It.IsAny<CancellationToken>()), Times.Once);
+        torrentsApiMock.Verify(m => m.RequestDownloadAsync(39097730, 2, false, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task GetDownloadInfos_GeneratesCorrectFakedlLinks_ForUsenet()
     {
         // Arrange
