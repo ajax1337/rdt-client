@@ -78,6 +78,22 @@ public class TorrentRunner(
         return String.Equals(torrent.RdStatusRaw, "deleted", StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// A download row is eligible to (re)start when it is queued, not yet started,
+    /// and not terminally completed. Error is deliberately NOT part of this gate:
+    /// the retry path (Reset + UpdateError write-back) leaves the transient error on
+    /// the row so the UI can show "Retrying (N/M): error" while the row waits to
+    /// restart. Requiring Error == null here wedged those rows forever — Error set,
+    /// DownloadStarted/DownloadFinished null, never picked up again (observed in
+    /// production after a spurious aria2 not-found error). Every PERMANENT failure
+    /// path sets Completed alongside Error, so Completed == null is the real gate;
+    /// the transient error itself is cleared when the download actually starts.
+    /// </summary>
+    public static Boolean CanStartDownload(Download download)
+    {
+        return download.Completed == null && download.DownloadQueued != null && download.DownloadStarted == null;
+    }
+
     public async Task Initialize()
     {
         Log("Initializing TorrentRunner");
@@ -539,7 +555,7 @@ public class TorrentRunner(
             {
                 // Check if there are any downloads that are queued and can be started.
                 var queuedDownloads = torrent.Downloads
-                                             .Where(m => m.Completed == null && m.DownloadQueued != null && m.DownloadStarted == null && m.Error == null)
+                                             .Where(CanStartDownload)
                                              .OrderBy(m => m.DownloadQueued)
                                              .ToList();
 
@@ -599,6 +615,16 @@ public class TorrentRunner(
                     }
 
                     Log($"Marking download as started", download, torrent);
+
+                    if (download.Error != null)
+                    {
+                        // Transient-retry row: the retry path wrote the previous attempt's
+                        // error back after Reset() so the UI could surface it while queued.
+                        // The retry is actually starting now, so the row goes back to a
+                        // clean in-flight state.
+                        await downloads.UpdateError(download.DownloadId, null);
+                        download.Error = null;
+                    }
 
                     download.DownloadStarted = DateTime.UtcNow;
                     await downloads.UpdateDownloadStarted(download.DownloadId, download.DownloadStarted);

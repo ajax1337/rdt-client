@@ -85,8 +85,16 @@ public class Aria2StatusPoller(ILogger<Aria2StatusPoller> logger, IHttpClientFac
         {
             var aria2Downloaders = TorrentRunner.ActiveDownloadClients
                 .Where(m => m.Value.Type == Data.Enums.DownloadClient.Aria2c)
+                // Skip clients whose terminal event already fired (Finished) and
+                // downloaders that finalized (self-removed their gid from aria2 on
+                // complete/error/cancel). A finished entry stays in
+                // ActiveDownloadClients until the next TorrentRunner.Tick processes
+                // it — a multi-second window in which the gid is already purged from
+                // aria2 by our own Remove(), so evaluating a fresh snapshot here
+                // would emit a spurious "Download was not found in Aria2".
+                .Where(m => !m.Value.Finished)
                 .Select(m => (DownloadId: m.Key, Downloader: m.Value.Downloader as Aria2cDownloader))
-                .Where(x => x.Downloader is not null)
+                .Where(x => x.Downloader is not null && !x.Downloader!.IsFinalized)
                 .ToList();
 
             if (aria2Downloaders.Count > 0)

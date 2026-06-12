@@ -7,7 +7,7 @@ public class Aria2cDownloader : IDownloader
 {
     private const Int32 RetryCount = 5;
 
-    private readonly Aria2NetClient _aria2NetClient;
+    private readonly IAria2cClient _aria2NetClient;
     private readonly String _filePath;
 
     private readonly ILogger _logger;
@@ -15,6 +15,14 @@ public class Aria2cDownloader : IDownloader
     private readonly String _uri;
 
     private String? _gid;
+
+    // Set the moment this downloader reaches a terminal state: a DownloadComplete
+    // (success or error) is being emitted, or Cancel() was called. Crucially it is
+    // set BEFORE Remove() purges the gid from aria2, because from that instant a
+    // fresh TellAll snapshot legitimately no longer contains the gid — without this
+    // flag a subsequent Update() would misread our own removeDownloadResult as
+    // "aria2 lost the download" and emit a spurious not-found error.
+    private volatile Boolean _finalized;
 
     /// <summary>
     /// Exposes the current aria2c Gid for read-only consumers (the Aria2StatusPoller
@@ -26,7 +34,15 @@ public class Aria2cDownloader : IDownloader
     /// </summary>
     public String? Gid => _gid;
 
-    public Aria2cDownloader(String? gid, String uri, String filePath, String downloadPath, String? category)
+    /// <summary>
+    /// True once a terminal DownloadComplete has been emitted or the download was
+    /// cancelled. After this the gid has been (or is about to be) purged from aria2
+    /// by our own Remove(), so snapshots missing the gid carry no signal; Update()
+    /// is a no-op and the Aria2StatusPoller skips this downloader entirely.
+    /// </summary>
+    public Boolean IsFinalized => _finalized;
+
+    public Aria2cDownloader(String? gid, String uri, String filePath, String downloadPath, String? category, IAria2cClient? aria2Client = null)
     {
         _logger = Log.ForContext<Aria2cDownloader>();
         _logger.Debug($"Instantiated new Aria2c Downloader for URI {uri} to filePath {filePath} and downloadPath {downloadPath} and GID {gid}");
@@ -49,15 +65,22 @@ public class Aria2cDownloader : IDownloader
             _remotePath = _filePath;
         }
 
-        // Patched: original 10s timeout was too aggressive when aria2c is saturated
-        // with active downloads (a status poll could exceed it and crash TaskRunner).
-        // 60s matches the rest of the patched provider HttpClient timeouts.
-        var httpClient = new HttpClient
+        if (aria2Client != null)
         {
-            Timeout = TimeSpan.FromSeconds(60)
-        };
+            _aria2NetClient = aria2Client;
+        }
+        else
+        {
+            // Patched: original 10s timeout was too aggressive when aria2c is saturated
+            // with active downloads (a status poll could exceed it and crash TaskRunner).
+            // 60s matches the rest of the patched provider HttpClient timeouts.
+            var httpClient = new HttpClient
+            {
+                Timeout = TimeSpan.FromSeconds(60)
+            };
 
-        _aria2NetClient = new(Settings.Get.DownloadClient.Aria2cUrl, Settings.Get.DownloadClient.Aria2cSecret, httpClient, 10);
+            _aria2NetClient = new Aria2NetClientAdapter(new(Settings.Get.DownloadClient.Aria2cUrl, Settings.Get.DownloadClient.Aria2cSecret, httpClient, 10));
+        }
     }
 
     public event EventHandler<DownloadCompleteEventArgs>? DownloadComplete;
@@ -139,6 +162,11 @@ public class Aria2cDownloader : IDownloader
 
     public async Task Cancel()
     {
+        // Finalize before Remove(): once removeDownloadResult lands, snapshots no
+        // longer contain the gid and a concurrent/subsequent Update() must not
+        // interpret that as a loss.
+        _finalized = true;
+
         await Remove();
     }
 
@@ -187,10 +215,21 @@ public class Aria2cDownloader : IDownloader
             return;
         }
 
+        // Terminal state already reached: we removed the gid from aria2 ourselves
+        // (complete/error/cancel), so this snapshot — taken after that removal —
+        // legitimately lacks the gid. Evaluating it would re-emit a spurious
+        // "Download was not found in Aria2" for a download that finished fine.
+        if (_finalized)
+        {
+            return;
+        }
+
         var download = allDownloads.FirstOrDefault(m => m.Gid == _gid);
 
         if (download == null)
         {
+            _finalized = true;
+
             DownloadComplete?.Invoke(this,
                                      new()
                                      {
@@ -202,6 +241,8 @@ public class Aria2cDownloader : IDownloader
 
         if (!String.IsNullOrWhiteSpace(download.ErrorMessage) || download.Status == "error")
         {
+            _finalized = true;
+
             await Remove();
 
             DownloadComplete?.Invoke(this,
@@ -216,6 +257,11 @@ public class Aria2cDownloader : IDownloader
         if (download.Status == "complete" || download.Status == "removed")
         {
             _logger.Debug($"Aria2 download found as complete {_gid}");
+
+            // Must be set BEFORE Remove(): the instant removeDownloadResult purges
+            // the gid, any snapshot taken by the poller no longer contains it, and
+            // only this flag tells a later Update() that the absence is self-inflicted.
+            _finalized = true;
 
             await Remove();
 

@@ -77,11 +77,7 @@ public class DownloadClient(Download download, Torrent torrent, String destinati
                 _ => throw new($"Unknown download client {Type}")
             };
 
-            Downloader.DownloadComplete += (_, args) =>
-            {
-                Finished = true;
-                Error ??= args.Error;
-            };
+            Downloader.DownloadComplete += (_, args) => OnDownloadComplete(args);
 
             Downloader.DownloadProgress += (_, args) =>
             {
@@ -112,6 +108,27 @@ public class DownloadClient(Download download, Torrent torrent, String destinati
 
             throw new($"An unexpected error occurred preparing download {download.Link} for torrent {torrent.RdName}: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// First terminal event wins. A downloader can emit a late second event — e.g.
+    /// aria2's "Download was not found in Aria2" arriving one poll cycle after a
+    /// successful completion already fired, because our own Remove() purged the gid
+    /// from aria2's snapshot. The previous <c>Error ??= args.Error</c> only protected
+    /// an earlier error from being overwritten; after a SUCCESS (Error == null) it
+    /// happily adopted the late error and sent a byte-complete download into the
+    /// retry path. Error is written before Finished because TorrentRunner.Tick reads
+    /// Finished first and then Error without any synchronization.
+    /// </summary>
+    internal void OnDownloadComplete(DownloadCompleteEventArgs args)
+    {
+        if (Finished)
+        {
+            return;
+        }
+
+        Error ??= args.Error;
+        Finished = true;
     }
 
     public async Task Cancel()
